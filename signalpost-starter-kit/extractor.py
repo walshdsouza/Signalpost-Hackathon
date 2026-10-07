@@ -31,7 +31,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
 DDG_MAX_RESULTS = 3
 
 SYSTEM_PROMPT = """You are a precise Norwegian company intelligence analyst.
@@ -58,8 +58,12 @@ source text provided. Follow these rules without exception:
 
 def _ddg_search_sync(query: str, max_results: int) -> list[dict]:
     """Synchronous DuckDuckGo search — runs in a thread pool."""
-    with DDGS() as ddgs:
-        return list(ddgs.text(query, max_results=max_results))
+    try:
+        with DDGS() as ddgs:
+            return list(ddgs.text(query, max_results=max_results))
+    except Exception as e:
+        print(f"Search backend failed: {e}")
+        return []
 
 
 async def _ddg_search(query: str, max_results: int = DDG_MAX_RESULTS) -> list[dict]:
@@ -83,9 +87,15 @@ def _fetch_text_sync(url: str) -> tuple[str, str]:
 
 
 async def _fetch_text(url: str) -> tuple[str, str]:
-    """Async wrapper: run trafilatura in the default executor."""
+    """Async wrapper: run trafilatura with a strict 5-second timeout."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(_fetch_text_sync, url))
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, partial(_fetch_text_sync, url)),
+            timeout=5.0
+        )
+    except TimeoutError:
+        return url, ""
 
 
 def _build_user_message(enhet: Enhet, search_results: list[dict], scraped: list[tuple[str, str]]) -> str:
@@ -158,6 +168,8 @@ async def extract_company_profile(enhet: Enhet) -> CompanyProfile:
     openai_client = AsyncOpenAI(
         api_key=api_key,
         base_url=GEMINI_BASE_URL,
+        timeout=15.0,
+        max_retries=0,
     )
     client = instructor.from_openai(openai_client)
 
@@ -166,6 +178,7 @@ async def extract_company_profile(enhet: Enhet) -> CompanyProfile:
     profile: CompanyProfile = await client.chat.completions.create(
         model=GEMINI_MODEL,
         response_model=CompanyProfile,
+        max_retries=0,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
