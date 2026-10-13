@@ -3,3 +3,4 @@
 __pycache__/
 *.json
 *.db
+batch_1000.txt
