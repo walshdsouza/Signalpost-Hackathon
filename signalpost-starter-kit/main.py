@@ -39,18 +39,22 @@ log = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-# Default test list -- add / remove org numbers freely.
-ORG_NUMBERS: list[str] = [
-    "923609016",  # Equinor ASA
-    "974483740",  # Telenor ASA (Note: If this returns 404, it might be an old test org number)
-    "984851006",  # DNB Bank ASA
-]
+# Load 1,000 organization numbers dynamically from our generated batch file
+try:
+    with open("batch_1000.txt", "r") as f:
+        # Strip whitespace, newlines, and quotes to get clean 9-digit numbers
+        ORG_NUMBERS = [line.strip(' \n",') for line in f if line.strip()]
+except FileNotFoundError:
+    # Fallback sandbox list if the text file is missing
+    ORG_NUMBERS = [
+        "923609016",  # Equinor ASA
+        "984851006",  # DNB Bank ASA
+    ]
 
 OUTPUT_FILE = "output_profiles.json"
 
 # Max concurrent company lookups (respects rate limits on Brreg & Gemini).
 _CONCURRENCY = 1
-
 
 # ---------------------------------------------------------------------------
 # Core coroutine
