@@ -31,7 +31,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-GEMINI_MODEL = "gemini-3.8-flash"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
 DDG_MAX_RESULTS = 3
 
 SYSTEM_PROMPT = """You are a precise Norwegian company intelligence analyst.

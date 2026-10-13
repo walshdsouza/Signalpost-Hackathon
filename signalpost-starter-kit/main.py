@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 
 # Load 1,000 organization numbers dynamically from our generated batch file
 try:
-    with open("batch_1000.txt", "r") as f:
+    with open("batch_100.txt", "r") as f:
         # Strip whitespace, newlines, and quotes to get clean 9-digit numbers
         ORG_NUMBERS = [line.strip(' \n",') for line in f if line.strip()]
 except FileNotFoundError:

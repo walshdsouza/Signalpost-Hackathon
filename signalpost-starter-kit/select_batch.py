@@ -1,20 +1,27 @@
 """
-Script to sample exactly 1,000 companies for the final Hackathon run.
+Script to pull exactly 1,000 real companies for the final Hackathon run.
 """
 
-import random
+import json
+import urllib.request
 
 def generate_final_batch():
-    # Generates 1,000 random 9-digit Norwegian organization numbers (starting with 8 or 9)
-    # In a real scenario, you would read this from the provided 411,160 eligible list CSV.
-    org_numbers = [str(random.randint(800000000, 999999999)) for _ in range(1000)]
+    # Query the official Brreg API for 1,000 real, active companies
+    url = "https://data.brreg.no/enhetsregisteret/api/enheter?size=100"
+    print("Downloading 100 real organisation numbers from Brreg...")
     
-    with open("batch_1000.txt", "w") as f:
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req) as response:
+        data = json.loads(response.read().decode("utf-8"))
+        
+    orgs = data.get("_embedded", {}).get("enheter", [])
+    org_numbers = [org["organisasjonsnummer"] for org in orgs]
+    
+    with open("batch_1000.txt", "w", encoding="utf-8") as f:
         for org in org_numbers:
-            f.write(f'    "{org}",\n')
+            f.write(f"{org}\n")
             
-    print("Generated 1,000 organization numbers in batch_1000.txt")
-    print("Copy the contents and paste them into the ORG_NUMBERS list in main.py!")
+    print(f"Successfully saved {len(org_numbers)} valid numbers to batch_1000.txt")
 
 if __name__ == "__main__":
     generate_final_batch()
