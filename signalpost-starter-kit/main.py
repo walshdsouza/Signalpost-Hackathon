@@ -21,6 +21,8 @@ from brreg_client import lookup_enhet
 from entity_matcher import is_same_company
 from extractor import extract_company_profile
 from schema import CompanyProfile
+from storage import init_db, get_cached_profile, save_company_snapshot
+from diff_engine import apply_diff_and_reconciliation
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -117,10 +119,13 @@ async def process_company(
             name_verified,
         )
 
+        # Fetch previous snapshot from SQLite
+        cached_result = get_cached_profile(orgnr)
+
         # ------------------------------------------------------------------
-        # 4. Package result
+        # 4. Package & Reconcile Result
         # ------------------------------------------------------------------
-        result: dict = {
+        raw_result: dict = {
             "orgnr": orgnr,
             "brreg_metadata": {
                 "navn": enhet.navn,
@@ -157,7 +162,11 @@ async def process_company(
             "processing_seconds": round(elapsed, 2),
         }
 
-        return orgnr, result
+        # Apply diff engine logic and store in database
+        final_result, explanation = apply_diff_and_reconciliation(cached_result, raw_result)
+        save_company_snapshot(orgnr, enhet.navn, final_result)
+
+        return orgnr, final_result
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +224,7 @@ async def run_batch(org_numbers: list[str]) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
+    init_db()
     output = await run_batch(ORG_NUMBERS)
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as fh:

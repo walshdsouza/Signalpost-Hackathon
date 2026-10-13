@@ -115,8 +115,8 @@ def _build_user_message(enhet: Enhet, search_results: list[dict], scraped: list[
     for url, text in scraped:
         if text:
             lines.append(f"\n--- SOURCE: {url} ---")
-            # Truncate very long pages to stay within context limits
-            lines.append(text[:8_000])
+            # Cap each individual page payload to stay within limits
+            lines.append(text[:3_000])
 
     return "\n".join(lines)
 
@@ -168,20 +168,23 @@ async def extract_company_profile(enhet: Enhet) -> CompanyProfile:
     openai_client = AsyncOpenAI(
         api_key=api_key,
         base_url=GEMINI_BASE_URL,
-        timeout=15.0,
-        max_retries=0,
+        timeout=60.0,
+        max_retries=3,  # Gives Google time to recover without crashing immediately
     )
     client = instructor.from_openai(openai_client)
 
-    user_message = _build_user_message(enhet, search_results, scraped)
+    raw_user_message = _build_user_message(enhet, search_results, scraped)
+    
+    # Cap scraped context to 6,000 characters to prevent slow processing and 503 spikes
+    truncated_message = raw_user_message[:6000] if raw_user_message else "No web text extracted."
 
     profile: CompanyProfile = await client.chat.completions.create(
         model=GEMINI_MODEL,
         response_model=CompanyProfile,
-        max_retries=0,
+        max_retries=3,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
+            {"role": "user", "content": truncated_message},
         ],
     )
 
