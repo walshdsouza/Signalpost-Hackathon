@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime
 
@@ -39,18 +40,22 @@ log = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-# Load 1,000 organization numbers dynamically from our generated batch file
-try:
-    with open("batch_100.txt", "r") as f:
-        # Strip whitespace, newlines, and quotes to get clean 9-digit numbers
-        ORG_NUMBERS = [line.strip(' \n",') for line in f if line.strip()]
-except FileNotFoundError:
-    # Fallback sandbox list if the text file is missing
-    ORG_NUMBERS = [
-        "923609016",  # Equinor ASA
-        "984851006",  # DNB Bank ASA
+BATCH_FILE = "batch_1000.txt"
+
+def load_target_organisations() -> list[str]:
+    if os.path.exists(BATCH_FILE):
+        with open(BATCH_FILE, "r", encoding="utf-8") as f:
+            orgs = [line.strip(' \n\r",') for line in f if line.strip()]
+        if orgs:
+            return orgs
+    # Fallback sandbox list if the batch file is missing or empty
+    log.warning("%s not found or empty -- falling back to default test orgs.", BATCH_FILE)
+    return [
+        "923609016",  # EQUINOR ASA
+        "984851006",  # DNB BANK ASA
     ]
 
+ORG_NUMBERS = load_target_organisations()
 OUTPUT_FILE = "output_profiles.json"
 
 # Max concurrent company lookups (respects rate limits on Brreg & Gemini).
@@ -71,7 +76,7 @@ async def process_company(
         semaphore: Shared semaphore that throttles concurrent calls.
 
     Returns:
-        A ``(orgnr, result_dict)`` pair.  *result_dict* is ``None`` when the
+        A ``(orgnr, result_dict)`` pair. *result_dict* is ``None`` when the
         registry lookup fails so the caller can skip and log gracefully.
     """
     async with semaphore:
@@ -101,21 +106,16 @@ async def process_company(
         # ------------------------------------------------------------------
         # 3. Cross-check extracted entity references against official name
         # ------------------------------------------------------------------
-        # Check if the official company name or core entity name is confirmed
-        # in the extracted summary context.
         summary_text = (profile.summary_of_changes or "").lower()
         official_clean = enhet.navn.lower().replace("asa", "").replace("as", "").strip()
 
-        # Passes if the clean entity name is explicitly present in the verified summary
-        # or matches the target entity directly.
         name_verified: bool = (
             official_clean in summary_text
             or is_same_company(enhet.navn, enhet.navn)
         )
 
-        # Calculate the elapsed time right here so it's ready for logging and saving
         elapsed = time.perf_counter() - t0
-        
+
         log.info(
             "[%s] Done in %.1f s  |  name_verified=%s",
             orgnr,
