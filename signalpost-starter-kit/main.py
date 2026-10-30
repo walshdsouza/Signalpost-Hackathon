@@ -2,21 +2,23 @@
 Async batch orchestrator for the Norwegian company intelligence pipeline.
 
 Usage:
-    python main.py
+    python main.py input_orgs.txt [--output output_profiles.json]
 
 Output:
-    output_profiles.json  -- aggregated Brreg metadata + sourced CompanyProfile
-                             for every organisation number in ORG_NUMBERS.
+    JSON file (default output_profiles.json) -- aggregated Brreg metadata +
+    sourced CompanyProfile for every organisation number in the input file.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
-import os
+import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 from brreg_client import lookup_enhet
 from entity_matcher import is_same_company
@@ -40,23 +42,34 @@ log = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-BATCH_FILE = "batch_1000.txt"
+DEFAULT_OUTPUT_FILE = "output_profiles.json"
 
-def load_target_organisations() -> list[str]:
-    if os.path.exists(BATCH_FILE):
-        with open(BATCH_FILE, "r", encoding="utf-8") as f:
-            orgs = [line.strip(' \n\r",') for line in f if line.strip()]
-        if orgs:
-            return orgs
-    # Fallback sandbox list if the batch file is missing or empty
-    log.warning("%s not found or empty -- falling back to default test orgs.", BATCH_FILE)
-    return [
-        "923609016",  # EQUINOR ASA
-        "984851006",  # DNB BANK ASA
-    ]
 
-ORG_NUMBERS = load_target_organisations()
-OUTPUT_FILE = "output_profiles.json"
+def load_target_organisations(path: str | Path) -> list[str]:
+    """Read organisation numbers from *path*, one per line.
+
+    Tolerates stray quotes/commas (e.g. a JSON-style list) and skips blank
+    lines. Duplicates are dropped while preserving order.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        orgs = [line.strip(' \t\r\n",\'[]') for line in f]
+    return list(dict.fromkeys(o for o in orgs if o))
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Enrich Norwegian companies from a file of organisation numbers.",
+    )
+    parser.add_argument(
+        "input_file",
+        help="Path to a text file with one organisation number per line.",
+    )
+    parser.add_argument(
+        "--output",
+        default=DEFAULT_OUTPUT_FILE,
+        help="Path of the JSON results file (default: %(default)s).",
+    )
+    return parser.parse_args(argv)
 
 # Max concurrent company lookups (respects rate limits on Brreg & Gemini).
 _CONCURRENCY = 1
@@ -227,15 +240,27 @@ async def run_batch(org_numbers: list[str]) -> dict[str, dict]:
 # Entry-point
 # ---------------------------------------------------------------------------
 
-async def main() -> None:
-    init_db()
-    output = await run_batch(ORG_NUMBERS)
+async def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as fh:
+    try:
+        org_numbers = load_target_organisations(args.input_file)
+    except OSError as e:
+        log.error("Cannot read input file %s: %s", args.input_file, e)
+        return 1
+    if not org_numbers:
+        log.error("Input file %s contains no organisation numbers.", args.input_file)
+        return 1
+
+    init_db()
+    output = await run_batch(org_numbers)
+
+    with open(args.output, "w", encoding="utf-8") as fh:
         json.dump(output, fh, indent=2, ensure_ascii=False)
 
-    log.info("Results saved -> %s  (%d entries)", OUTPUT_FILE, len(output))
+    log.info("Results saved -> %s  (%d entries)", args.output, len(output))
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))

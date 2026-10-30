@@ -23,5 +23,6 @@ RUN pip install --no-cache-dir .
 # Copy remaining project source files
 COPY . .
 
-# Run the pipeline by default
-CMD ["python", "main.py"]
+# Usage: docker run -v <dir>:/data <image> /data/input_orgs.txt --output /data/out.json
+ENTRYPOINT ["python", "main.py"]
+CMD ["batch_1000.txt"]
