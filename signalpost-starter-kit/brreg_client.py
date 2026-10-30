@@ -36,6 +36,8 @@ class Enhet(BaseModel):
     organisasjonsform: Organisasjonsform
     naeringskode1: Naeringskode | None = None
     forretningsadresse: Forretningsadresse | None = None
+    hjemmeside: str | None = None  # registered website, as entered in Brreg
+    overordnetEnhet: str | None = None  # org number of the parent unit, if any
 
 
 # ---------------------------------------------------------------------------

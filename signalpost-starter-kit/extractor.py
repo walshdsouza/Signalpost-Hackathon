@@ -11,6 +11,7 @@ Pipeline:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from datetime import date
 from functools import partial
@@ -23,9 +24,12 @@ from duckduckgo_search import DDGS
 from openai import AsyncOpenAI, AuthenticationError, PermissionDeniedError
 
 from brreg_client import Enhet
+from domain_validator import DomainValidator
 from schema import CompanyProfile, SourcedFact
 
 load_dotenv()
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -33,7 +37,7 @@ load_dotenv()
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GEMINI_MODEL = "gemini-3.5-flash-lite"
-DDG_MAX_RESULTS = 3
+DDG_MAX_RESULTS = 6  # extra headroom: unrelated/parent domains are filtered out
 
 # Set once the API rejects our key, so the rest of the batch skips the
 # search/scrape work instead of repeating a call that cannot succeed.
@@ -54,6 +58,10 @@ source text provided. Follow these rules without exception:
    currency symbols, commas, or text). Return null if not found.
 7. For summary_of_changes, write a brief factual description of what was
    found and what gaps remain.
+8. The company may be a subsidiary of a larger group. Only attribute facts
+   that are about the named company itself. Never attribute a parent or sister
+   company's website, leadership, figures or accounts to it; if the text is
+   about the group rather than this company, set the value to null.
 """
 
 
@@ -170,12 +178,21 @@ async def _fetch_text(url: str) -> tuple[str, str]:
         return url, ""
 
 
-def _build_user_message(enhet: Enhet, search_results: list[dict], scraped: list[tuple[str, str]]) -> str:
+def _build_user_message(
+    enhet: Enhet,
+    search_results: list[dict],
+    scraped: list[tuple[str, str]],
+    parents: list[Enhet] | None = None,
+) -> str:
     """Assemble the user message sent to the LLM."""
     lines: list[str] = [
         f"Company: {enhet.navn}",
         f"Organisation number: {enhet.organisasjonsnummer}",
         f"Today's date: {date.today().isoformat()}",
+    ]
+    if parents:
+        lines.append("Parent organisation(s) - NOT this company: " + "; ".join(p.navn for p in parents))
+    lines += [
         "",
         "=== SEARCH RESULTS (title | url | snippet) ===",
     ]
@@ -197,11 +214,16 @@ def _build_user_message(enhet: Enhet, search_results: list[dict], scraped: list[
 # Main public function
 # ---------------------------------------------------------------------------
 
-async def extract_company_profile(enhet: Enhet) -> CompanyProfile:
+async def extract_company_profile(
+    enhet: Enhet,
+    validator: DomainValidator | None = None,
+) -> CompanyProfile:
     """Build a CompanyProfile for a Norwegian company using web search + LLM.
 
     Args:
         enhet: A validated :class:`~brreg_client.Enhet` from the Brreg API.
+        validator: Domain validator for *enhet*; built from Brreg if omitted.
+            Only domains it accepts are scraped or shown to the LLM.
 
     Returns:
         A :class:`~schema.CompanyProfile` populated from open-source web data.
@@ -229,6 +251,33 @@ async def extract_company_profile(enhet: Enhet) -> CompanyProfile:
         print(f"\nSearch blocked. Attempting domain fallback for {enhet.navn}...")
         clean_name = enhet.navn.lower().replace(" ", "").replace("asa", "").replace("as", "")
         urls = [f"https://www.{clean_name}.com", f"https://www.{clean_name}.no/en"]
+
+    # ------------------------------------------------------------------
+    # 1b. Validate domains: only the entity's own sites may be scraped
+    # ------------------------------------------------------------------
+    if validator is None:
+        validator = await DomainValidator.for_entity(enhet)
+
+    registered = validator.registered_site_url
+    candidates = list(dict.fromkeys(([registered] if registered else []) + urls))
+    accepted: list[str] = []
+    for url in candidates:
+        verdict = validator.check(url)
+        if verdict.accepted:
+            accepted.append(url)
+        else:
+            log.info("[%s] Rejected %s: %s", enhet.organisasjonsnummer, url, verdict.reason)
+
+    if not accepted:
+        return CompanyProfile(
+            summary_of_changes=(
+                f"No web source could be verified as belonging to {enhet.navn} "
+                "(candidate domains matched a parent group or another entity); "
+                "web-derived fields left empty."
+            )
+        )
+    urls = accepted
+    search_results = [r for r in search_results if r.get("href") in set(accepted)]
     # ------------------------------------------------------------------
     # 2. Fetch and scrape all URLs concurrently
     # ------------------------------------------------------------------
@@ -247,7 +296,7 @@ async def extract_company_profile(enhet: Enhet) -> CompanyProfile:
     )
     client = instructor.from_openai(openai_client)
 
-    raw_user_message = _build_user_message(enhet, search_results, scraped)
+    raw_user_message = _build_user_message(enhet, search_results, scraped, validator.ancestors)
     
     # Cap scraped context to 6,000 characters to prevent slow processing and 503 spikes
     truncated_message = raw_user_message[:6000] if raw_user_message else "No web text extracted."
@@ -268,7 +317,8 @@ async def extract_company_profile(enhet: Enhet) -> CompanyProfile:
             _llm_disabled_reason = "GEMINI_API_KEY was rejected by the API"
         raise
 
-    return profile
+    # Drop anything the LLM attributed from a parent domain or an unverified site
+    return validator.sanitize_profile(profile)
 
 
 # ---------------------------------------------------------------------------

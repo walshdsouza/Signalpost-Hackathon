@@ -61,6 +61,8 @@ def _normalise(name: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
+normalise_name = _normalise
+
 MATCH_THRESHOLD = 95
 
 

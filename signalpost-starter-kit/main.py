@@ -26,6 +26,7 @@ from extractor import extract_company_profile, llm_unavailable_reason, validate_
 from schema import CompanyProfile
 from storage import init_db, get_cached_profile, save_company_snapshot
 from diff_engine import apply_diff_and_reconciliation
+from domain_validator import DomainValidator
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -87,6 +88,8 @@ def _brreg_metadata(enhet: Enhet | None, orgnr: str) -> dict:
             "organisasjonsform": None,
             "naeringskode1": None,
             "forretningsadresse": None,
+            "hjemmeside": None,
+            "overordnetEnhet": None,
         }
     return {
         "navn": enhet.navn,
@@ -114,6 +117,8 @@ def _brreg_metadata(enhet: Enhet | None, orgnr: str) -> dict:
             if enhet.forretningsadresse
             else None
         ),
+        "hjemmeside": enhet.hjemmeside,
+        "overordnetEnhet": enhet.overordnetEnhet,
     }
 
 
@@ -151,11 +156,14 @@ def _build_result(
     }
 
 
-async def _enrich(orgnr: str) -> tuple[Enhet | None, CompanyProfile, str | None]:
+async def _enrich(
+    orgnr: str,
+) -> tuple[Enhet | None, CompanyProfile, str | None, DomainValidator | None]:
     """Run registry lookup + LLM extraction, degrading to a base profile.
 
-    Returns ``(enhet, profile, fallback_reason)``; *fallback_reason* is ``None``
-    only when the full pipeline succeeded. Never raises for expected failures.
+    Returns ``(enhet, profile, fallback_reason, validator)``; *fallback_reason*
+    is ``None`` only when the full pipeline succeeded. Never raises for expected
+    failures. *validator* is ``None`` when the registry lookup failed.
     """
     # 1. Official registry lookup (Brreg Enhetsregisteret)
     try:
@@ -163,30 +171,33 @@ async def _enrich(orgnr: str) -> tuple[Enhet | None, CompanyProfile, str | None]
     except Exception as e:
         reason = f"Brreg lookup failed ({type(e).__name__}: {e})."
         log.warning("[%s] %s Returning base profile.", orgnr, reason)
-        return None, CompanyProfile(summary_of_changes=reason), reason
+        return None, CompanyProfile(summary_of_changes=reason), reason, None
 
     if enhet is None:
         reason = "Organisation not found in Brreg (404)."
         log.warning("[%s] %s Returning base profile.", orgnr, reason)
-        return None, CompanyProfile(summary_of_changes=reason), reason
+        return None, CompanyProfile(summary_of_changes=reason), reason, None
 
     log.info("[%s] Brreg OK: %s", orgnr, enhet.navn)
+
+    # Trusted registry hierarchy: which domains belong to parent groups?
+    validator = await DomainValidator.for_entity(enhet)
 
     # 2. Short-circuit before any search/scrape if the LLM cannot run
     unavailable = llm_unavailable_reason()
     if unavailable:
         reason = f"LLM extraction skipped: {unavailable}."
         log.warning("[%s] %s Returning Brreg baseline.", orgnr, reason)
-        return enhet, CompanyProfile(summary_of_changes=reason), reason
+        return enhet, validator.sanitize_profile(CompanyProfile(summary_of_changes=reason)), reason, validator
 
-    # 3. Web + LLM extraction
+    # 3. Web + LLM extraction (only validated domains are scraped)
     log.info("[%s] Extracting intelligence profile (web search + LLM) ...", orgnr)
     try:
-        return enhet, await extract_company_profile(enhet), None
+        return enhet, await extract_company_profile(enhet, validator), None, validator
     except Exception as e:
         reason = f"LLM extraction failed ({type(e).__name__}: {e})."
         log.error("[%s] %s Returning Brreg baseline.", orgnr, reason)
-        return enhet, CompanyProfile(summary_of_changes=reason), reason
+        return enhet, validator.sanitize_profile(CompanyProfile(summary_of_changes=reason)), reason, validator
 
 
 async def process_company(
@@ -211,11 +222,11 @@ async def process_company(
         log.info("[%s] Starting ...", orgnr)
 
         try:
-            enhet, profile, fallback_reason = await _enrich(orgnr)
+            enhet, profile, fallback_reason, validator = await _enrich(orgnr)
         except Exception as e:  # last line of defence for the gather loop
             fallback_reason = f"Unexpected error ({type(e).__name__}: {e})."
             log.exception("[%s] %s", orgnr, fallback_reason)
-            enhet, profile = None, CompanyProfile(summary_of_changes=fallback_reason)
+            enhet, profile, validator = None, CompanyProfile(summary_of_changes=fallback_reason), None
 
         elapsed = time.perf_counter() - t0
         raw_result = _build_result(orgnr, enhet, profile, fallback_reason, elapsed)
@@ -224,6 +235,9 @@ async def process_company(
         # cached facts are preserved and state keeps being tracked).
         try:
             cached_result = get_cached_profile(orgnr)
+            if validator is not None:
+                # Don't let the diff engine "preserve" a parent's site cached by an earlier run
+                cached_result = validator.purge_cached(cached_result)
             final_result, _explanation = apply_diff_and_reconciliation(cached_result, raw_result)
             company_name = (
                 (enhet.navn if enhet else None)
