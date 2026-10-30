@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from schema import SOCIAL_PLATFORMS
 
 TRACKED_FACT_FIELDS = [
     "website",
@@ -14,6 +15,46 @@ TRACKED_FACT_FIELDS = [
     "employee_count",
     "latest_revenue_nok",
 ]
+
+MAX_TRACKED_NEWS = 20
+
+
+def _diff_fact(label: str, old_fact: dict, new_fact: dict) -> tuple[dict, str | None]:
+    """Compare one SourcedFact; return (fact to keep, change description)."""
+    old_val = old_fact.get("fact_value")
+    new_val = new_fact.get("fact_value")
+
+    # 1. New value obtained where previously empty
+    if old_val is None and new_val is not None:
+        return new_fact, f"Discovered {label}: set to '{new_val}'."
+
+    # 2. Value changed between runs
+    if old_val is not None and new_val is not None and old_val != new_val:
+        return new_fact, f"Updated {label}: changed from '{old_val}' to '{new_val}'."
+
+    # 3. Resilience fallback: API returned null, but cache has verified data
+    if old_val is not None and new_val is None:
+        return old_fact, f"Preserved cached {label} ('{old_val}') due to unverified/null new extraction."
+
+    return new_fact, None
+
+
+def _merge_news(old_items: list[dict], new_items: list[dict]) -> tuple[list[dict], int]:
+    """Append newly found articles to the cached ones, keyed by URL.
+
+    Items seen before are kept (news does not disappear because one run missed
+    it); a re-found item takes the fresh copy. Returns (merged, number_added).
+    """
+    merged = {item["url"]: item for item in old_items if item.get("url")}
+    added = 0
+    for item in new_items:
+        if not item.get("url"):
+            continue
+        if item["url"] not in merged:
+            added += 1
+        merged[item["url"]] = item
+    ordered = sorted(merged.values(), key=lambda i: i.get("published_date", ""), reverse=True)
+    return ordered[:MAX_TRACKED_NEWS], added
 
 
 def apply_diff_and_reconciliation(
@@ -35,24 +76,29 @@ def apply_diff_and_reconciliation(
     reconciled_intel = dict(new_intel)
 
     for field in TRACKED_FACT_FIELDS:
-        old_fact = cached_intel.get(field) or {}
-        new_fact = new_intel.get(field) or {}
+        fact, change = _diff_fact(field, cached_intel.get(field) or {}, new_intel.get(field) or {})
+        reconciled_intel[field] = fact
+        if change:
+            changes.append(change)
 
-        old_val = old_fact.get("fact_value")
-        new_val = new_fact.get("fact_value")
+    # Social profiles: same rules as facts, one per platform.
+    old_socials = cached_intel.get("socials") or {}
+    new_socials = new_intel.get("socials") or {}
+    reconciled_socials = dict(new_socials)
+    for platform in SOCIAL_PLATFORMS:
+        fact, change = _diff_fact(
+            f"{platform} profile", old_socials.get(platform) or {}, new_socials.get(platform) or {}
+        )
+        reconciled_socials[platform] = fact
+        if change:
+            changes.append(change)
+    reconciled_intel["socials"] = reconciled_socials
 
-        # 1. New value obtained where previously empty
-        if old_val is None and new_val is not None:
-            changes.append(f"Discovered {field}: set to '{new_val}'.")
-
-        # 2. Value changed between runs
-        elif old_val is not None and new_val is not None and old_val != new_val:
-            changes.append(f"Updated {field}: changed from '{old_val}' to '{new_val}'.")
-
-        # 3. Resilience fallback: API returned null, but cache has verified data
-        elif old_val is not None and new_val is None:
-            reconciled_intel[field] = old_fact
-            changes.append(f"Preserved cached {field} ('{old_val}') due to unverified/null new extraction.")
+    # News: accumulate by URL.
+    merged_news, added = _merge_news(cached_intel.get("news") or [], new_intel.get("news") or [])
+    reconciled_intel["news"] = merged_news
+    if added:
+        changes.append(f"Discovered {added} new news item{'s' if added != 1 else ''}.")
 
     if not changes:
         summary = "All fields match existing cache. Zero changes detected."

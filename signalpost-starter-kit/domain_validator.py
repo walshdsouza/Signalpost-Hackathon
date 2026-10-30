@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 from brreg_client import BASE_URL, Enhet, lookup_enhet
 from entity_matcher import is_same_company, normalise_name
-from schema import CompanyProfile
+from schema import SOCIAL_PLATFORMS, CompanyProfile
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ MAX_ANCESTOR_DEPTH = 3
 
 _SOURCED_FACT_FIELDS = ("website", "ceo_name", "employee_count", "latest_revenue_nok")
 _TWO_LEVEL_SUFFIXES = {"co.uk", "org.uk", "com.au", "co.nz", "com.br"}
+_SOCIAL_PREFIX_SEGMENTS = {"company", "school", "showcase", "c", "user", "channel", "pages"}
 _NORDIC_ASCII = str.maketrans({"ø": "o", "æ": "ae", "å": "a", "ö": "o", "ä": "a", "é": "e"})
 
 # Parent lookups are shared between many subsidiaries; cache by org number.
@@ -150,6 +151,34 @@ class DomainValidator:
 
         return Verdict(False, f"{domain} does not match entity name")
 
+    def check_social(self, url: str | None) -> Verdict:
+        """Reject social profiles that belong to a parent/group rather than the entity.
+
+        The handle is compared with the entity's name the same way domains are:
+        an exact name match is accepted; a handle that is only the first part of
+        the name (``equinor`` for "Equinor Energy AS") or matches an ancestor's
+        name is refused.
+        """
+        try:
+            path = urlparse(url if "//" in (url or "") else "//" + (url or "")).path
+        except ValueError:
+            return Verdict(False, "not a valid URL")
+        segments = [s for s in path.split("/") if s]
+        while segments and segments[0].lower() in _SOCIAL_PREFIX_SEGMENTS:
+            segments.pop(0)
+        if not segments:
+            return Verdict(False, "no profile handle")
+        handle = segments[0].lstrip("@").lower()
+
+        if _label_matches_name(handle, self.enhet.navn):
+            return Verdict(True, "handle matches entity name")
+        if _is_shorter_brand_of(handle, self.enhet.navn):
+            return Verdict(False, f"handle {handle!r} looks like a parent/group brand")
+        for anc in self.ancestors:
+            if _label_matches_name(handle, anc.navn):
+                return Verdict(False, f"handle {handle!r} belongs to parent {anc.navn}")
+        return Verdict(True, "handle not attributable to a parent")
+
     @property
     def registered_site_url(self) -> str | None:
         """The Brreg ``hjemmeside`` as a URL, only if it validates for this entity."""
@@ -174,6 +203,30 @@ class DomainValidator:
                 log.info("[%s] Dropped %s: sourced from parent domain %s",
                          self.enhet.organisasjonsnummer, field, src)
                 intel[field] = {"fact_value": None, "source_url": None, "retrieval_date": None}
+
+        # News must come from the entity's own validated domains.
+        kept_news = []
+        for item in intel.get("news") or []:
+            verdict = self.check(item.get("url"))
+            if verdict.accepted:
+                kept_news.append(item)
+            else:
+                log.info("[%s] Dropped news %r: %s", self.enhet.organisasjonsnummer,
+                         item.get("url"), verdict.reason)
+        intel["news"] = kept_news
+
+        # Socials must not be a parent/group's accounts.
+        socials = intel.get("socials") or {}
+        for platform in SOCIAL_PLATFORMS:
+            value = (socials.get(platform) or {}).get("fact_value")
+            if isinstance(value, str) and value:
+                verdict = self.check_social(value)
+                if not verdict.accepted:
+                    log.info("[%s] Dropped %s profile %s: %s", self.enhet.organisasjonsnummer,
+                             platform, value, verdict.reason)
+                    socials[platform] = {"fact_value": None, "source_url": None, "retrieval_date": None}
+        if socials:
+            intel["socials"] = socials
 
         site = intel.get("website") or {}
         value = site.get("fact_value")
