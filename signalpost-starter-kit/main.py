@@ -20,9 +20,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from brreg_client import lookup_enhet
+from brreg_client import Enhet, lookup_enhet
 from entity_matcher import is_same_company
-from extractor import extract_company_profile
+from extractor import extract_company_profile, llm_unavailable_reason, validate_llm_key
 from schema import CompanyProfile
 from storage import init_db, get_cached_profile, save_company_snapshot
 from diff_engine import apply_diff_and_reconciliation
@@ -78,111 +78,170 @@ _CONCURRENCY = 1
 # Core coroutine
 # ---------------------------------------------------------------------------
 
+def _brreg_metadata(enhet: Enhet | None, orgnr: str) -> dict:
+    """Deterministic registry block; a null-filled stub if Brreg gave us nothing."""
+    if enhet is None:
+        return {
+            "navn": None,
+            "organisasjonsnummer": orgnr,
+            "organisasjonsform": None,
+            "naeringskode1": None,
+            "forretningsadresse": None,
+        }
+    return {
+        "navn": enhet.navn,
+        "organisasjonsnummer": enhet.organisasjonsnummer,
+        "organisasjonsform": {
+            "kode": enhet.organisasjonsform.kode,
+            "beskrivelse": enhet.organisasjonsform.beskrivelse,
+        },
+        "naeringskode1": (
+            {
+                "kode": enhet.naeringskode1.kode,
+                "beskrivelse": enhet.naeringskode1.beskrivelse,
+            }
+            if enhet.naeringskode1
+            else None
+        ),
+        "forretningsadresse": (
+            {
+                "adresse": enhet.forretningsadresse.adresse,
+                "postnummer": enhet.forretningsadresse.postnummer,
+                "poststed": enhet.forretningsadresse.poststed,
+                "land": enhet.forretningsadresse.land,
+                "kommune": enhet.forretningsadresse.kommune,
+            }
+            if enhet.forretningsadresse
+            else None
+        ),
+    }
+
+
+def _build_result(
+    orgnr: str,
+    enhet: Enhet | None,
+    profile: CompanyProfile,
+    fallback_reason: str | None,
+    elapsed: float,
+) -> dict:
+    """Package one company's output record (same shape for success and fallback)."""
+    official_name = enhet.navn if enhet else None
+
+    # Cross-check extracted entity references against official name
+    name_verified = False
+    if enhet is not None:
+        summary_text = (profile.summary_of_changes or "").lower()
+        official_clean = enhet.navn.lower().replace("asa", "").replace("as", "").strip()
+        name_verified = (
+            official_clean in summary_text
+            or is_same_company(enhet.navn, enhet.navn)
+        )
+
+    return {
+        "orgnr": orgnr,
+        "status": "fallback" if fallback_reason else "complete",
+        "fallback_reason": fallback_reason,
+        "brreg_metadata": _brreg_metadata(enhet, orgnr),
+        "intelligence_profile": profile.model_dump(),
+        "cross_check": {
+            "name_verified": name_verified,
+            "official_name": official_name,
+        },
+        "processing_seconds": round(elapsed, 2),
+    }
+
+
+async def _enrich(orgnr: str) -> tuple[Enhet | None, CompanyProfile, str | None]:
+    """Run registry lookup + LLM extraction, degrading to a base profile.
+
+    Returns ``(enhet, profile, fallback_reason)``; *fallback_reason* is ``None``
+    only when the full pipeline succeeded. Never raises for expected failures.
+    """
+    # 1. Official registry lookup (Brreg Enhetsregisteret)
+    try:
+        enhet = await lookup_enhet(orgnr)
+    except Exception as e:
+        reason = f"Brreg lookup failed ({type(e).__name__}: {e})."
+        log.warning("[%s] %s Returning base profile.", orgnr, reason)
+        return None, CompanyProfile(summary_of_changes=reason), reason
+
+    if enhet is None:
+        reason = "Organisation not found in Brreg (404)."
+        log.warning("[%s] %s Returning base profile.", orgnr, reason)
+        return None, CompanyProfile(summary_of_changes=reason), reason
+
+    log.info("[%s] Brreg OK: %s", orgnr, enhet.navn)
+
+    # 2. Short-circuit before any search/scrape if the LLM cannot run
+    unavailable = llm_unavailable_reason()
+    if unavailable:
+        reason = f"LLM extraction skipped: {unavailable}."
+        log.warning("[%s] %s Returning Brreg baseline.", orgnr, reason)
+        return enhet, CompanyProfile(summary_of_changes=reason), reason
+
+    # 3. Web + LLM extraction
+    log.info("[%s] Extracting intelligence profile (web search + LLM) ...", orgnr)
+    try:
+        return enhet, await extract_company_profile(enhet), None
+    except Exception as e:
+        reason = f"LLM extraction failed ({type(e).__name__}: {e})."
+        log.error("[%s] %s Returning Brreg baseline.", orgnr, reason)
+        return enhet, CompanyProfile(summary_of_changes=reason), reason
+
+
 async def process_company(
     orgnr: str,
     semaphore: asyncio.Semaphore,
-) -> tuple[str, dict | None]:
+) -> tuple[str, dict]:
     """Fetch, enrich, and cross-check a single Norwegian company.
+
+    Always returns a result record so every requested organisation appears in
+    the output, even if the registry or the LLM is unavailable.
 
     Args:
         orgnr:     Norwegian organisation number (9 digits).
         semaphore: Shared semaphore that throttles concurrent calls.
 
     Returns:
-        A ``(orgnr, result_dict)`` pair. *result_dict* is ``None`` when the
-        registry lookup fails so the caller can skip and log gracefully.
+        An ``(orgnr, result_dict)`` pair. See ``status`` / ``fallback_reason``
+        in the record to tell a full result from a base profile.
     """
     async with semaphore:
         t0 = time.perf_counter()
         log.info("[%s] Starting ...", orgnr)
 
-        # ------------------------------------------------------------------
-        # 1. Official registry lookup (Brreg Enhetsregisteret)
-        # ------------------------------------------------------------------
-        enhet = await lookup_enhet(orgnr)
-        if enhet is None:
-            log.warning("[%s] Organisation not found in Brreg -- skipping.", orgnr)
-            return orgnr, None
-
-        log.info("[%s] Brreg OK: %s", orgnr, enhet.navn)
-
-        # ------------------------------------------------------------------
-        # 2. Web + LLM extraction
-        # ------------------------------------------------------------------
-        log.info("[%s] Extracting intelligence profile (web search + LLM) ...", orgnr)
         try:
-            profile: CompanyProfile = await extract_company_profile(enhet)
-        except Exception as e:
-            log.error("[%s] Extraction failed: %s", orgnr, e)
-            profile = CompanyProfile(summary_of_changes="Extraction skipped due to API error.")
-
-        # ------------------------------------------------------------------
-        # 3. Cross-check extracted entity references against official name
-        # ------------------------------------------------------------------
-        summary_text = (profile.summary_of_changes or "").lower()
-        official_clean = enhet.navn.lower().replace("asa", "").replace("as", "").strip()
-
-        name_verified: bool = (
-            official_clean in summary_text
-            or is_same_company(enhet.navn, enhet.navn)
-        )
+            enhet, profile, fallback_reason = await _enrich(orgnr)
+        except Exception as e:  # last line of defence for the gather loop
+            fallback_reason = f"Unexpected error ({type(e).__name__}: {e})."
+            log.exception("[%s] %s", orgnr, fallback_reason)
+            enhet, profile = None, CompanyProfile(summary_of_changes=fallback_reason)
 
         elapsed = time.perf_counter() - t0
+        raw_result = _build_result(orgnr, enhet, profile, fallback_reason, elapsed)
+
+        # Reconcile with the previous snapshot (also for fallback runs, so
+        # cached facts are preserved and state keeps being tracked).
+        try:
+            cached_result = get_cached_profile(orgnr)
+            final_result, _explanation = apply_diff_and_reconciliation(cached_result, raw_result)
+            company_name = (
+                (enhet.navn if enhet else None)
+                or final_result.get("brreg_metadata", {}).get("navn")
+                or orgnr
+            )
+            save_company_snapshot(orgnr, company_name, final_result)
+        except Exception as e:
+            log.error("[%s] State tracking failed (%s: %s); returning unreconciled result.",
+                      orgnr, type(e).__name__, e)
+            final_result = raw_result
 
         log.info(
-            "[%s] Done in %.1f s  |  name_verified=%s",
+            "[%s] Done in %.1f s  |  status=%s",
             orgnr,
             elapsed,
-            name_verified,
+            final_result["status"],
         )
-
-        # Fetch previous snapshot from SQLite
-        cached_result = get_cached_profile(orgnr)
-
-        # ------------------------------------------------------------------
-        # 4. Package & Reconcile Result
-        # ------------------------------------------------------------------
-        raw_result: dict = {
-            "orgnr": orgnr,
-            "brreg_metadata": {
-                "navn": enhet.navn,
-                "organisasjonsnummer": enhet.organisasjonsnummer,
-                "organisasjonsform": {
-                    "kode": enhet.organisasjonsform.kode,
-                    "beskrivelse": enhet.organisasjonsform.beskrivelse,
-                },
-                "naeringskode1": (
-                    {
-                        "kode": enhet.naeringskode1.kode,
-                        "beskrivelse": enhet.naeringskode1.beskrivelse,
-                    }
-                    if enhet.naeringskode1
-                    else None
-                ),
-                "forretningsadresse": (
-                    {
-                        "adresse": enhet.forretningsadresse.adresse,
-                        "postnummer": enhet.forretningsadresse.postnummer,
-                        "poststed": enhet.forretningsadresse.poststed,
-                        "land": enhet.forretningsadresse.land,
-                        "kommune": enhet.forretningsadresse.kommune,
-                    }
-                    if enhet.forretningsadresse
-                    else None
-                ),
-            },
-            "intelligence_profile": profile.model_dump(),
-            "cross_check": {
-                "name_verified": name_verified,
-                "official_name": enhet.navn,
-            },
-            "processing_seconds": round(elapsed, 2),
-        }
-
-        # Apply diff engine logic and store in database
-        final_result, explanation = apply_diff_and_reconciliation(cached_result, raw_result)
-        save_company_snapshot(orgnr, enhet.navn, final_result)
-
         return orgnr, final_result
 
 
@@ -197,8 +256,8 @@ async def run_batch(org_numbers: list[str]) -> dict[str, dict]:
         org_numbers: List of Norwegian organisation numbers to process.
 
     Returns:
-        A mapping of ``orgnr -> result_dict`` (entries where the registry
-        lookup failed are omitted).
+        A mapping of ``orgnr -> result_dict`` with one entry per organisation
+        number; failed lookups yield a base profile rather than being omitted.
     """
     semaphore = asyncio.Semaphore(_CONCURRENCY)
     batch_start = time.perf_counter()
@@ -213,22 +272,17 @@ async def run_batch(org_numbers: list[str]) -> dict[str, dict]:
     log.info("=" * 60)
 
     tasks = [process_company(orgnr, semaphore) for orgnr in org_numbers]
-    raw_results: list[tuple[str, dict | None]] = await asyncio.gather(*tasks)
+    raw_results: list[tuple[str, dict]] = await asyncio.gather(*tasks)
 
-    output: dict[str, dict] = {}
-    skipped = 0
-    for orgnr, result in raw_results:
-        if result is None:
-            skipped += 1
-        else:
-            output[orgnr] = result
+    output: dict[str, dict] = dict(raw_results)
+    fallbacks = sum(1 for r in output.values() if r["status"] == "fallback")
 
     elapsed_total = time.perf_counter() - batch_start
     log.info("=" * 60)
     log.info(
-        "  Batch complete  |  %d succeeded  |  %d skipped  |  %.1f s total",
+        "  Batch complete  |  %d companies  |  %d fallback  |  %.1f s total",
         len(output),
-        skipped,
+        fallbacks,
         elapsed_total,
     )
     log.info("=" * 60)
@@ -253,6 +307,13 @@ async def main(argv: list[str] | None = None) -> int:
         return 1
 
     init_db()
+
+    # Validate the key once up front so a bad key never costs a search/scrape.
+    await validate_llm_key()
+    unavailable = llm_unavailable_reason()
+    if unavailable:
+        log.warning("LLM disabled for this run (%s); all companies get Brreg baseline.", unavailable)
+
     output = await run_batch(org_numbers)
 
     with open(args.output, "w", encoding="utf-8") as fh:

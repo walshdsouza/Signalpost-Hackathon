@@ -15,11 +15,12 @@ import os
 from datetime import date
 from functools import partial
 
+import httpx
 import instructor
 import trafilatura
 from dotenv import load_dotenv
 from duckduckgo_search import DDGS
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, AuthenticationError, PermissionDeniedError
 
 from brreg_client import Enhet
 from schema import CompanyProfile, SourcedFact
@@ -33,6 +34,10 @@ load_dotenv()
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 DDG_MAX_RESULTS = 3
+
+# Set once the API rejects our key, so the rest of the batch skips the
+# search/scrape work instead of repeating a call that cannot succeed.
+_llm_disabled_reason: str | None = None
 
 SYSTEM_PROMPT = """You are a precise Norwegian company intelligence analyst.
 
@@ -50,6 +55,73 @@ source text provided. Follow these rules without exception:
 7. For summary_of_changes, write a brief factual description of what was
    found and what gaps remain.
 """
+
+
+# ---------------------------------------------------------------------------
+# LLM availability
+# ---------------------------------------------------------------------------
+
+_PLACEHOLDER_KEYS = {"your_key_here", "your_api_key", "your-api-key", "changeme", "xxx"}
+
+
+def _get_api_key() -> str | None:
+    """Return the configured key, or ``None`` if unset, blank or a placeholder."""
+    key = os.environ.get("GEMINI_API_KEY", "").strip().strip("\"'")
+    if not key or key.lower() in _PLACEHOLDER_KEYS:
+        return None
+    return key
+
+
+def llm_unavailable_reason() -> str | None:
+    """Return why LLM extraction cannot run right now, or ``None`` if it can.
+
+    Purely local: no network access, safe to call before any search/scrape.
+    """
+    if _llm_disabled_reason:
+        return _llm_disabled_reason
+    if not _get_api_key():
+        return "GEMINI_API_KEY is not set"
+    return None
+
+
+async def validate_llm_key() -> None:
+    """Probe the API once so an invalid key is caught before any web work.
+
+    Only a definitive rejection (400/401/403) disables the LLM for the run;
+    timeouts, rate limits and 5xx are inconclusive and leave it enabled, since
+    per-company extraction already falls back on failure.
+    """
+    global _llm_disabled_reason
+    key = _get_api_key()
+    if not key:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            resp = await http.get(
+                GEMINI_BASE_URL + "models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+    except httpx.HTTPError:
+        return
+    if resp.status_code in (400, 401, 403):
+        _llm_disabled_reason = "GEMINI_API_KEY was rejected by the API"
+
+
+def _is_auth_error(exc: BaseException | None) -> bool:
+    """True if *exc* (or anything it was raised from) is an API key rejection.
+
+    Gemini's OpenAI-compatible endpoint reports a bad key as HTTP 400
+    ("Please pass a valid API key"), which instructor wraps, so the message
+    is checked as well as the 401/403 exception classes.
+    """
+    while exc is not None:
+        if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
+            return True
+        text = str(exc).lower()
+        if "api key" in text or "api_key_invalid" in text:
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -136,12 +208,14 @@ async def extract_company_profile(enhet: Enhet) -> CompanyProfile:
         Fields the LLM cannot verify from scraped text will have ``fact_value=None``.
 
     Raises:
-        EnvironmentError: If ``GEMINI_API_KEY`` is not set in the environment / .env.
+        EnvironmentError: If the LLM is unavailable (no key, or key rejected
+            earlier in this run). Checked before any search or scraping.
         openai.APIError: On LLM API failures.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise EnvironmentError("GEMINI_API_KEY is not set. Add it to your .env file.")
+    reason = llm_unavailable_reason()
+    if reason:
+        raise EnvironmentError(f"{reason}. Add a valid key to your .env file.")
+    api_key = _get_api_key()
 
     # ------------------------------------------------------------------
     # 1. Search DuckDuckGo for the company's website + recent news
@@ -178,15 +252,21 @@ async def extract_company_profile(enhet: Enhet) -> CompanyProfile:
     # Cap scraped context to 6,000 characters to prevent slow processing and 503 spikes
     truncated_message = raw_user_message[:6000] if raw_user_message else "No web text extracted."
 
-    profile: CompanyProfile = await client.chat.completions.create(
-        model=GEMINI_MODEL,
-        response_model=CompanyProfile,
-        max_retries=3,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": truncated_message},
-        ],
-    )
+    global _llm_disabled_reason
+    try:
+        profile: CompanyProfile = await client.chat.completions.create(
+            model=GEMINI_MODEL,
+            response_model=CompanyProfile,
+            max_retries=3,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": truncated_message},
+            ],
+        )
+    except Exception as e:
+        if _is_auth_error(e):
+            _llm_disabled_reason = "GEMINI_API_KEY was rejected by the API"
+        raise
 
     return profile
 

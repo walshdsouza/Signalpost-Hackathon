@@ -63,4 +63,17 @@ def apply_diff_and_reconciliation(
     reconciled_profile = dict(new_profile)
     reconciled_profile["intelligence_profile"] = reconciled_intel
 
+    # Registry lookup failed this run (placeholder metadata): keep the last
+    # known registry data rather than overwriting it with an empty stub.
+    new_meta = new_profile.get("brreg_metadata") or {}
+    cached_meta = cached_profile.get("brreg_metadata") or {}
+    if not new_meta.get("navn") and cached_meta.get("navn"):
+        reconciled_profile["brreg_metadata"] = cached_meta
+        reconciled_profile["cross_check"] = cached_profile.get(
+            "cross_check", new_profile.get("cross_check")
+        )
+        changes.append("Preserved cached Brreg metadata because the registry lookup failed.")
+        summary = " ".join(changes)
+        reconciled_intel["summary_of_changes"] = summary
+
     return reconciled_profile, summary
