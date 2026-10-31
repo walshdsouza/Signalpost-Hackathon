@@ -74,6 +74,19 @@ MAX_PROMPT_CHARS = 12_000  # text + links for all pages; keeps latency / 503s in
 PAGE_TEXT_CHARS = 3_000
 PAGE_LINKS_SHOWN = 40
 
+# USD per 1M tokens. Override via env if Google's price list changes - the
+# defaults are Gemini Flash-Lite-tier list prices and must be checked against
+# https://ai.google.dev/gemini-api/docs/pricing for GEMINI_MODEL.
+def _price(env: str, default: float) -> float:
+    try:
+        return float(os.environ.get(env, default))
+    except ValueError:
+        return default
+
+
+GEMINI_INPUT_USD_PER_M = _price("GEMINI_INPUT_USD_PER_M", 0.10)
+GEMINI_OUTPUT_USD_PER_M = _price("GEMINI_OUTPUT_USD_PER_M", 0.40)
+
 # Set once the API rejects our key, so the rest of the batch skips the
 # search/scrape work instead of repeating a call that cannot succeed.
 _llm_disabled_reason: str | None = None
@@ -198,6 +211,64 @@ def _is_auth_error(exc: BaseException | None) -> bool:
             return True
         exc = exc.__cause__ or exc.__context__
     return False
+
+
+# ---------------------------------------------------------------------------
+# Cost tracking (token usage reported by the Gemini API -> USD)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Usage:
+    """Accumulated token usage and cost for one scope (a company or the run)."""
+
+    calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    @property
+    def cost_usd(self) -> float:
+        return (
+            self.prompt_tokens * GEMINI_INPUT_USD_PER_M
+            + self.completion_tokens * GEMINI_OUTPUT_USD_PER_M
+        ) / 1_000_000
+
+    def as_dict(self) -> dict:
+        return {
+            "llm_calls": self.calls,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "cost_usd": round(self.cost_usd, 8),
+        }
+
+
+# Single event loop, no awaits between updates -> plain dicts are safe.
+_usage_by_org: dict[str, Usage] = {}
+_usage_total = Usage()
+
+
+def reset_usage() -> None:
+    _usage_by_org.clear()
+    global _usage_total
+    _usage_total = Usage()
+
+
+def record_usage(orgnr: str, completion) -> None:
+    """Add the ``usage`` block of a raw API response to the company and run totals."""
+    usage = getattr(completion, "usage", None)
+    prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+    out = int(getattr(usage, "completion_tokens", 0) or 0)
+    for u in (_usage_by_org.setdefault(orgnr, Usage()), _usage_total):
+        u.calls += 1
+        u.prompt_tokens += prompt
+        u.completion_tokens += out
+
+
+def get_company_usage(orgnr: str) -> dict:
+    return _usage_by_org.get(orgnr, Usage()).as_dict()
+
+
+def get_total_usage() -> dict:
+    return _usage_total.as_dict()
 
 
 # ---------------------------------------------------------------------------
@@ -707,8 +778,8 @@ async def extract_company_profile(
 
     global _llm_disabled_reason
     try:
-        extraction: CompanyExtraction = await _retry_async(
-            lambda: client.chat.completions.create(
+        extraction, completion = await _retry_async(
+            lambda: client.chat.completions.create_with_completion(
                 model=GEMINI_MODEL,
                 response_model=CompanyExtraction,
                 max_retries=2,  # instructor: re-asks on schema-validation failures only
@@ -721,6 +792,7 @@ async def extract_company_profile(
             retryable=_is_retryable_llm_error,
             what=f"[{enhet.organisasjonsnummer}] Gemini call",
         )
+        record_usage(enhet.organisasjonsnummer, completion)
     except Exception as e:
         if _is_auth_error(e):
             _llm_disabled_reason = "GEMINI_API_KEY was rejected by the API"

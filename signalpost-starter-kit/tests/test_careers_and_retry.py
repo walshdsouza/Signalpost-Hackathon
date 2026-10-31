@@ -174,7 +174,37 @@ def test_batch_concurrency_capped_at_five():
         out = asyncio.run(main.run_batch([str(i) for i in range(20)]))
     finally:
         main._enrich, main.get_cached_profile, main.save_company_snapshot = orig
-    assert len(out) == 20 and state["peak"] == 5
+    assert len(out) == 21 and state["peak"] == 5  # 20 companies + _run_report
+
+
+# --------------------------------------------------------------------- cost
+
+def test_usage_cost_math_and_run_report():
+    from types import SimpleNamespace as NS
+    extractor.reset_usage()
+    extractor.GEMINI_INPUT_USD_PER_M, extractor.GEMINI_OUTPUT_USD_PER_M = 0.10, 0.40
+    extractor.record_usage("1", NS(usage=NS(prompt_tokens=10_000, completion_tokens=500)))
+    extractor.record_usage("1", NS(usage=NS(prompt_tokens=2_000, completion_tokens=100)))
+    extractor.record_usage("2", NS(usage=None))  # missing usage must not crash
+    c1 = extractor.get_company_usage("1")
+    assert (c1["llm_calls"], c1["prompt_tokens"], c1["completion_tokens"]) == (2, 12_000, 600)
+    assert abs(c1["cost_usd"] - (12_000 * 0.10 + 600 * 0.40) / 1e6) < 1e-12
+    assert extractor.get_total_usage()["llm_calls"] == 3
+    assert extractor.get_company_usage("nope")["cost_usd"] == 0
+
+    async def fake_enrich(orgnr):
+        extractor.record_usage(orgnr, NS(usage=NS(prompt_tokens=1_000_000, completion_tokens=0)))
+        return None, main.CompanyProfile(summary_of_changes="x"), "fake", None
+
+    orig = (main._enrich, main.get_cached_profile, main.save_company_snapshot)
+    main._enrich, main.get_cached_profile, main.save_company_snapshot = (
+        fake_enrich, lambda o: None, lambda *a, **k: None)
+    try:
+        out = asyncio.run(main.run_batch(["a", "b"]))
+    finally:
+        main._enrich, main.get_cached_profile, main.save_company_snapshot = orig
+    assert abs(out["_run_report"]["total_cost_usd"] - 0.20) < 1e-9
+    assert abs(out["a"]["operations"]["cost_usd"] - 0.10) < 1e-9
 
 
 if __name__ == "__main__":

@@ -22,7 +22,15 @@ from pathlib import Path
 
 from brreg_client import Enhet, lookup_enhet
 from entity_matcher import is_same_company
-from extractor import extract_company_profile, llm_unavailable_reason, validate_llm_key
+from extractor import (
+    extract_company_profile,
+    get_company_usage,
+    GEMINI_MODEL,
+    get_total_usage,
+    llm_unavailable_reason,
+    reset_usage,
+    validate_llm_key,
+)
 from schema import CompanyProfile
 from storage import init_db, get_cached_profile, save_company_snapshot
 from diff_engine import apply_diff_and_reconciliation
@@ -44,6 +52,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 DEFAULT_OUTPUT_FILE = "output_profiles.json"
+RUN_REPORT_KEY = "_run_report"
 
 
 def load_target_organisations(path: str | Path) -> list[str]:
@@ -153,6 +162,7 @@ def _build_result(
             "official_name": official_name,
         },
         "processing_seconds": round(elapsed, 2),
+        "operations": get_company_usage(orgnr),
     }
 
 
@@ -273,6 +283,7 @@ async def run_batch(org_numbers: list[str]) -> dict[str, dict]:
         A mapping of ``orgnr -> result_dict`` with one entry per organisation
         number; failed lookups yield a base profile rather than being omitted.
     """
+    reset_usage()
     semaphore = asyncio.Semaphore(_CONCURRENCY)
     batch_start = time.perf_counter()
 
@@ -289,6 +300,7 @@ async def run_batch(org_numbers: list[str]) -> dict[str, dict]:
     raw_results: list[tuple[str, dict]] = await asyncio.gather(*tasks)
 
     output: dict[str, dict] = dict(raw_results)
+    usage = get_total_usage()
     fallbacks = sum(1 for r in output.values() if r["status"] == "fallback")
 
     elapsed_total = time.perf_counter() - batch_start
@@ -299,8 +311,23 @@ async def run_batch(org_numbers: list[str]) -> dict[str, dict]:
         fallbacks,
         elapsed_total,
     )
+    log.info(
+        "  LLM usage       |  %d calls  |  %d prompt + %d completion tokens  |  total_cost_usd=$%.6f",
+        usage["llm_calls"], usage["prompt_tokens"], usage["completion_tokens"], usage["cost_usd"],
+    )
     log.info("=" * 60)
 
+    # Run report: under a reserved key so per-company records stay keyed by orgnr.
+    output[RUN_REPORT_KEY] = {
+        "companies": len(raw_results),
+        "fallbacks": fallbacks,
+        "runtime_seconds": round(elapsed_total, 2),
+        "llm_model": GEMINI_MODEL,
+        "llm_calls": usage["llm_calls"],
+        "prompt_tokens": usage["prompt_tokens"],
+        "completion_tokens": usage["completion_tokens"],
+        "total_cost_usd": usage["cost_usd"],
+    }
     return output
 
 
@@ -333,7 +360,7 @@ async def main(argv: list[str] | None = None) -> int:
     with open(args.output, "w", encoding="utf-8") as fh:
         json.dump(output, fh, indent=2, ensure_ascii=False)
 
-    log.info("Results saved -> %s  (%d entries)", args.output, len(output))
+    log.info("Results saved -> %s  (%d companies)", args.output, len(output) - 1)
     return 0
 
 
