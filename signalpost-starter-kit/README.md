@@ -113,6 +113,7 @@ Read `docs/competition-control-loop.md`, `docs/external-connectors.md` and the p
 - **API key short-circuit.** The Gemini key is probed once at start-up, and a rejected key disables the LLM for the rest of the run. Every company then returns its Brreg baseline immediately, with no search, scraping or LLM calls spent on a key that cannot work.
 - **No LLM call on empty content.** If no verified domain remains, or the scraped pages return no readable text or links, the agent returns a baseline profile without calling the LLM.
 - Prompts are capped in size, and only validated domains are ever scraped.
+- **Automated Cost Reporting:** The pipeline dynamically extracts `usage_metadata` from the Gemini API and calculates the exact third-party USD cost based on token volume, appending it to the final machine-readable `_run_report`.
 
 ### Fault Tolerance
 
