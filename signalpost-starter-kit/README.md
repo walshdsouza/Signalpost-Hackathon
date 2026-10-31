@@ -100,6 +100,43 @@ Open-source code does not grant permission to scrape a platform. Follow each sou
 
 Read `docs/competition-control-loop.md`, `docs/external-connectors.md` and the public source policy before adding connectors.
 
+## Production-Ready Architecture
+
+### Data Integrity
+
+- **Subsidiary isolation.** Brreg's parent hierarchy is resolved up front, and a `DomainValidator` checks every website, news URL, social profile and careers/jobs link against the entity's own name and its parents' domains. A subsidiary can never be credited with its parent's site, accounts, news or job listings. The same checks run on previously cached snapshots, so a parent's data cannot be carried forward by the diff engine.
+- **Strict Pydantic schemas.** The LLM only returns lenient *candidates*. Each candidate is validated item by item into a strict model (`NewsItem`, normalised social URLs, careers URL), so one bad item never fails a whole response. Unsupported values become `null`, not guesses.
+- **Grounded `YYYY-MM-DD` dates.** A news item is kept only if it has a real, non-future `YYYY-MM-DD` publication date, its `date_type` is `published` (modified/updated/*oppdatert* dates are rejected), and its headline and date wording appear verbatim on a scraped page. Page metadata cross-checks the date. Navigation labels such as "See more news" or "Read more" are rejected, so UI text is never reported as news.
+
+### Cost Efficiency
+
+- **API key short-circuit.** The Gemini key is probed once at start-up, and a rejected key disables the LLM for the rest of the run. Every company then returns its Brreg baseline immediately, with no search, scraping or LLM calls spent on a key that cannot work.
+- **No LLM call on empty content.** If no verified domain remains, or the scraped pages return no readable text or links, the agent returns a baseline profile without calling the LLM.
+- Prompts are capped in size, and only validated domains are ever scraped.
+
+### Fault Tolerance
+
+- **Bounded concurrency.** Companies are processed concurrently behind an `asyncio.Semaphore` limited to **5**, which keeps large batches inside Brreg, search and Gemini rate limits.
+- **Exponential backoff.** A custom async retry loop with jitter (delay doubling per attempt, capped at 30 s) wraps the Gemini call (5 attempts; HTTP 429, 5xx, timeouts and connection errors, including errors wrapped by `instructor`), page fetches and web search (3 attempts). Authentication errors and other 4xx responses are not retried.
+- **Graceful degradation.** Every input always yields a result record. A failed lookup or extraction falls back to the Brreg baseline and is flagged `status: "fallback"` with a reason.
+
+### Testing Rigor
+
+The offline unit suite needs no network or API key:
+
+| Test file | Covers |
+| --- | --- |
+| `tests/test_domain_validator.py` | Registrable-domain parsing, parent-domain rejection (with and without a Brreg parent), subsidiaries registered with a parent's site, Norwegian characters and unrelated domains, sanitising and purging cached parent-sourced facts. |
+| `tests/test_news_extraction.py` | Rejection of UI labels, modified/updated dates, future dates, listing and non-article URLs; grounding of headlines, URLs and date evidence; page-metadata date cross-checks; social profile validation and group-brand rejection; news accumulation across runs. |
+
+`tests/test_careers_and_retry.py` additionally covers the careers/jobs validation, retry classification and backoff behaviour, and the concurrency limit.
+
+```bash
+python tests/test_domain_validator.py
+python tests/test_news_extraction.py
+python tests/test_careers_and_retry.py
+```
+
 ## Submission contract
 
 Submit a repository with:
