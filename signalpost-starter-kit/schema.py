@@ -301,6 +301,23 @@ class Socials(BaseModel):
         return self
 
 
+CAREERS_HINT_RE = re.compile(
+    r"(career|careers|karriere|jobs?|jobb|stillinger?|ledige[-_ ]?stillinger|vacanc|work-with-us|join-us|rekruttering)",
+    re.IGNORECASE,
+)
+
+
+def validate_careers_url(url: str) -> str:
+    """Return the cleaned careers URL or raise ``ValueError`` (not a jobs page)."""
+    url = (url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError(f"{url!r} is not an absolute http(s) URL")
+    if not CAREERS_HINT_RE.search(parsed.hostname + parsed.path):
+        raise ValueError(f"{url!r} does not look like a careers page")
+    return url
+
+
 class SocialCandidate(BaseModel):
     """Lenient shape the LLM fills in; validated by :func:`normalise_social_url`."""
 
@@ -362,6 +379,13 @@ class CompanyProfile(_ProfileFacts):
         description="Real news articles / press releases with definitive published dates.",
     )
     socials: Socials = Field(default_factory=Socials)
+    careers: SourcedFact = Field(
+        default_factory=SourcedFact,
+        description=(
+            "URL of THIS company's own careers / open-positions page (fact_value). "
+            "Never a parent or group careers page."
+        ),
+    )
 
 
 class CompanyExtraction(_ProfileFacts):
@@ -375,6 +399,10 @@ class CompanyExtraction(_ProfileFacts):
     social_candidates: list[SocialCandidate] = Field(
         default_factory=list,
         description="The company's own official social profiles taken from LINKS.",
+    )
+    careers_url: str | None = Field(
+        default=None,
+        description="URL of this company's own careers / jobs page, copied exactly from LINKS; else null.",
     )
 
 

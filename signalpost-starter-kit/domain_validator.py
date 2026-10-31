@@ -228,6 +228,18 @@ class DomainValidator:
         if socials:
             intel["socials"] = socials
 
+        # Careers/jobs: same domain rules as news - must be this entity's own site,
+        # never a parent's (the classic parent/subsidiary jobs mix-up).
+        careers = intel.get("careers") or {}
+        cvalue = careers.get("fact_value")
+        if isinstance(cvalue, str) and cvalue:
+            src = registrable_domain(careers.get("source_url"))
+            verdict = self.check(cvalue)
+            if not verdict.accepted or (src and src in self.ancestor_domains):
+                log.info("[%s] Dropped careers %s: %s", self.enhet.organisasjonsnummer,
+                         cvalue, verdict.reason if not verdict.accepted else "sourced from parent domain")
+                intel["careers"] = {"fact_value": None, "source_url": None, "retrieval_date": None}
+
         site = intel.get("website") or {}
         value = site.get("fact_value")
         if isinstance(value, str) and value and not self.check(value).accepted:

@@ -14,6 +14,7 @@ TRACKED_FACT_FIELDS = [
     "ceo_name",
     "employee_count",
     "latest_revenue_nok",
+    "careers",
 ]
 
 MAX_TRACKED_NEWS = 20

@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -29,7 +30,14 @@ import trafilatura
 from dotenv import load_dotenv
 from duckduckgo_search import DDGS
 from lxml import html as lxml_html
-from openai import AsyncOpenAI, AuthenticationError, PermissionDeniedError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    AuthenticationError,
+    PermissionDeniedError,
+)
 from pydantic import ValidationError
 
 from brreg_client import Enhet
@@ -38,6 +46,7 @@ from schema import (
     PLATFORM_HOSTS,
     SOCIAL_PLATFORMS,
     CompanyExtraction,
+    CAREERS_HINT_RE,
     CompanyProfile,
     NewsCandidate,
     NewsItem,
@@ -45,6 +54,7 @@ from schema import (
     SourcedFact,
     normalise_platform,
     normalise_social_url,
+    validate_careers_url,
 )
 
 load_dotenv()
@@ -113,6 +123,13 @@ SOCIALS (social_candidates):
     instagram, x, youtube, tiktok), copied exactly from a LINKS list. Never
     include share/follow buttons, personal profiles, or the parent/group's
     accounts. An empty list is correct when unsure.
+
+CAREERS (careers_url):
+16. Set careers_url to the URL of THIS company's own careers / open-positions
+    page, copied exactly from a LINKS list or the SOURCE page itself. Never use
+    the parent/group's careers or jobs page, a generic job-board search, or a
+    page for another entity - subsidiaries often link to the group's jobs page.
+    Use null when unsure.
 """
 
 
@@ -184,6 +201,55 @@ def _is_auth_error(exc: BaseException | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Retry with exponential backoff
+# ---------------------------------------------------------------------------
+
+LLM_ATTEMPTS = 5
+SCRAPE_ATTEMPTS = 3
+BACKOFF_BASE = 1.0   # seconds; delay = base * 2**attempt (+ jitter), capped
+BACKOFF_CAP = 30.0
+
+
+def _backoff_delay(attempt: int) -> float:
+    return min(BACKOFF_CAP, BACKOFF_BASE * (2 ** attempt)) * random.uniform(0.75, 1.25)
+
+
+class TransientFetchError(Exception):
+    """A scrape/search returned nothing; worth retrying (rate limit, blip)."""
+
+
+def _is_retryable_llm_error(exc: BaseException | None) -> bool:
+    """True for 429 / 5xx / timeouts / connection errors anywhere in the cause chain."""
+    if _is_auth_error(exc):
+        return False
+    while exc is not None:
+        if isinstance(exc, (APITimeoutError, APIConnectionError, httpx.TransportError)):
+            return True
+        if isinstance(exc, APIStatusError) and (exc.status_code == 429 or exc.status_code >= 500):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+async def _retry_async(factory, *, attempts: int, retryable, what: str):
+    """Await ``factory()`` up to *attempts* times with exponential backoff + jitter.
+
+    Only exceptions for which ``retryable(exc)`` is true are retried; the last
+    error is re-raised once attempts are exhausted.
+    """
+    for attempt in range(attempts):
+        try:
+            return await factory()
+        except Exception as e:
+            if attempt == attempts - 1 or not retryable(e):
+                raise
+            delay = _backoff_delay(attempt)
+            log.warning("%s failed (%s: %s); retry %d/%d in %.1fs",
+                        what, type(e).__name__, str(e)[:100], attempt + 1, attempts - 1, delay)
+            await asyncio.sleep(delay)
+
+
+# ---------------------------------------------------------------------------
 # Search + page fetching
 # ---------------------------------------------------------------------------
 
@@ -198,9 +264,23 @@ def _ddg_search_sync(query: str, max_results: int) -> list[dict]:
 
 
 async def _ddg_search(query: str, max_results: int = DDG_MAX_RESULTS) -> list[dict]:
-    """Async wrapper: run DDGS.text in the default executor."""
+    """Async wrapper: run DDGS.text in the default executor, retrying empty
+    (usually rate-limited) results with exponential backoff."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(_ddg_search_sync, query, max_results))
+
+    async def attempt() -> list[dict]:
+        results = await loop.run_in_executor(None, partial(_ddg_search_sync, query, max_results))
+        if not results:
+            raise TransientFetchError("empty search result")
+        return results
+
+    try:
+        return await _retry_async(
+            attempt, attempts=SCRAPE_ATTEMPTS,
+            retryable=lambda e: isinstance(e, TransientFetchError), what=f"search {query[:40]!r}",
+        )
+    except TransientFetchError:
+        return []
 
 
 @dataclass
@@ -287,14 +367,28 @@ def _fetch_page_sync(url: str) -> Page:
 
 
 async def _fetch_page(url: str) -> Page:
-    """Async wrapper: run trafilatura with a strict 5-second timeout."""
+    """Async wrapper: trafilatura with a 5-second timeout per attempt; empty
+    results and timeouts are retried with exponential backoff."""
     loop = asyncio.get_running_loop()
+
+    async def attempt() -> Page:
+        try:
+            page = await asyncio.wait_for(
+                loop.run_in_executor(None, partial(_fetch_page_sync, url)),
+                timeout=5.0,
+            )
+        except TimeoutError:
+            raise TransientFetchError("timeout") from None
+        if not (page.text or page.links):
+            raise TransientFetchError("no content (blocked or rate limited)")
+        return page
+
     try:
-        return await asyncio.wait_for(
-            loop.run_in_executor(None, partial(_fetch_page_sync, url)),
-            timeout=5.0,
+        return await _retry_async(
+            attempt, attempts=SCRAPE_ATTEMPTS,
+            retryable=lambda e: isinstance(e, TransientFetchError), what=f"fetch {url[:60]}",
         )
-    except TimeoutError:
+    except TransientFetchError:
         return Page(url)
 
 
@@ -309,14 +403,16 @@ _SOCIAL_HOSTS = {h for hosts in PLATFORM_HOSTS.values() for h in hosts}
 def _select_links(page: Page, limit: int = PAGE_LINKS_SHOWN) -> list[tuple[str, str]]:
     """Social profile links first, then same-site links that look like articles."""
     own = registrable_domain(page.url)
-    socials, articles = [], []
+    socials, careers, articles = [], [], []
     for text, href in page.links:
         dom = registrable_domain(href)
         if dom in _SOCIAL_HOSTS:
             socials.append((text, href))
+        elif dom == own and CAREERS_HINT_RE.search(urlparse(href).path):
+            careers.append((text, href))
         elif dom == own and text and _NEWSY_PATH_RE.search(urlparse(href).path):
             articles.append((text, href))
-    return (socials[:12] + articles)[:limit]
+    return (socials[:12] + careers[:5] + articles)[:limit]
 
 
 def _build_user_message(
@@ -486,6 +582,22 @@ def _build_profile(
             continue
         socials[platform] = SourcedFact(fact_value=url, source_url=linked[url], retrieval_date=today)
 
+    # -- careers: same gates as news (linked on a scraped page + own domain) ---
+    careers = SourcedFact()
+    if extraction.careers_url:
+        try:
+            curl = validate_careers_url(extraction.careers_url)
+            if _canon(curl) not in known_urls:
+                raise ValueError("url does not appear on any scraped page")
+            verdict = validator.check(curl)
+            if not verdict.accepted:
+                raise ValueError(f"url domain rejected: {verdict.reason}")
+            src = next((p for p in pages if _canon(p.url) == _canon(curl)
+                        or _canon(curl) in {_canon(u) for _, u in p.links}), None)
+            careers = SourcedFact(fact_value=curl, source_url=src.url if src else None, retrieval_date=today)
+        except ValueError as e:
+            log.info("[%s] Rejected careers link %s: %s", oid, extraction.careers_url, e)
+
     return CompanyProfile(
         website=extraction.website,
         ceo_name=extraction.ceo_name,
@@ -494,6 +606,7 @@ def _build_profile(
         summary_of_changes=extraction.summary_of_changes,
         news=news_items,
         socials=Socials(**socials),
+        careers=careers,
     )
 
 
@@ -585,7 +698,7 @@ async def extract_company_profile(
         api_key=api_key,
         base_url=GEMINI_BASE_URL,
         timeout=60.0,
-        max_retries=3,  # Gives Google time to recover without crashing immediately
+        max_retries=0,  # retries are handled by _retry_async (exponential backoff)
     )
     client = instructor.from_openai(openai_client)
 
@@ -594,14 +707,19 @@ async def extract_company_profile(
 
     global _llm_disabled_reason
     try:
-        extraction: CompanyExtraction = await client.chat.completions.create(
-            model=GEMINI_MODEL,
-            response_model=CompanyExtraction,
-            max_retries=3,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": truncated_message},
-            ],
+        extraction: CompanyExtraction = await _retry_async(
+            lambda: client.chat.completions.create(
+                model=GEMINI_MODEL,
+                response_model=CompanyExtraction,
+                max_retries=2,  # instructor: re-asks on schema-validation failures only
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": truncated_message},
+                ],
+            ),
+            attempts=LLM_ATTEMPTS,
+            retryable=_is_retryable_llm_error,
+            what=f"[{enhet.organisasjonsnummer}] Gemini call",
         )
     except Exception as e:
         if _is_auth_error(e):

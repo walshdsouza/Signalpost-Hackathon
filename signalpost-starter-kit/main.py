@@ -72,8 +72,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     return parser.parse_args(argv)
 
-# Max concurrent company lookups (respects rate limits on Brreg & Gemini).
-_CONCURRENCY = 1
+# Max concurrent company lookups (asyncio.Semaphore; respects Brreg/Gemini/search rate limits).
+_CONCURRENCY = 5
 
 # ---------------------------------------------------------------------------
 # Core coroutine
