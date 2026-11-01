@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date
@@ -88,6 +89,17 @@ def _is_shorter_brand_of(label: str, name: str) -> bool:
     return any("".join(tokens[:k]) == flat for k in range(1, len(tokens)))
 
 
+CONTENT_MISMATCH_REASON = "Name or org number missing from page content"
+
+
+def _fold_text(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def _digits_only(text: str) -> str:
+    return re.sub(r"\D", "", text)
+
+
 @dataclass(frozen=True)
 class Verdict:
     accepted: bool
@@ -108,6 +120,8 @@ class DomainValidator:
             d for a in self.ancestors if (d := registrable_domain(a.hjemmeside))
         }
         self.registered_domain = registrable_domain(enhet.hjemmeside)
+        # Domains whose fetched page text named neither the entity nor its org number.
+        self.content_rejected: set[str] = set()
 
     @classmethod
     async def for_entity(cls, enhet: Enhet) -> "DomainValidator":
@@ -133,10 +147,37 @@ class DomainValidator:
 
     # -- decisions ---------------------------------------------------------
 
+    def text_names_entity(self, text: str | None) -> bool:
+        """True if *text* contains the exact Brreg name (case-insensitive) or the
+        9-digit organisation number (also when written as ``923 609 016``)."""
+        if not text:
+            return False
+        if _fold_text(self.enhet.navn) in _fold_text(text):
+            return True
+        orgnr = _digits_only(self.enhet.organisasjonsnummer)
+        if len(orgnr) != 9:
+            return False
+        # Digits may be spaced/dotted (923 609 016, 923.609.016) but not part of a longer number.
+        pattern = r"(?<!\d)" + r"[\s. ]?".join(orgnr[i:i + 3] for i in (0, 3, 6)) + r"(?!\d)"
+        return re.search(pattern, text) is not None
+
+    def verify_content(self, url: str, text: str | None) -> Verdict:
+        """Grounding check on a fetched page. A failing domain is rejected for good
+        (``check`` refuses it afterwards) and one reason line is logged."""
+        if self.text_names_entity(text):
+            return Verdict(True, "page content names the entity")
+        domain = registrable_domain(url)
+        if domain:
+            self.content_rejected.add(domain)
+        log.info("[%s] Rejected %s: %s", self.enhet.organisasjonsnummer, url, CONTENT_MISMATCH_REASON)
+        return Verdict(False, CONTENT_MISMATCH_REASON)
+
     def check(self, url: str | None) -> Verdict:
         domain = registrable_domain(url)
         if domain is None:
             return Verdict(False, "not a valid URL")
+        if domain in self.content_rejected:
+            return Verdict(False, CONTENT_MISMATCH_REASON)
         if domain in self.ancestor_domains:
             return Verdict(False, f"{domain} belongs to a parent group")
 

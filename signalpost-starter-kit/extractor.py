@@ -41,7 +41,7 @@ from openai import (
 from pydantic import ValidationError
 
 from brreg_client import Enhet
-from domain_validator import DomainValidator, registrable_domain
+from domain_validator import CONTENT_MISMATCH_REASON, DomainValidator, registrable_domain
 from schema import (
     PLATFORM_HOSTS,
     SOCIAL_PLATFORMS,
@@ -363,6 +363,7 @@ class Page:
     links: list[tuple[str, str]] = field(default_factory=list)  # (anchor text, absolute url)
     published: str | None = None  # from page metadata (YYYY-MM-DD)
     modified: str | None = None   # from page metadata (YYYY-MM-DD) - never a publish date
+    raw_text: str = ""            # all visible text incl. footer/header (for entity grounding only)
 
 
 _META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
@@ -422,6 +423,22 @@ def _extract_links(html: str, base_url: str) -> list[tuple[str, str]]:
     return links
 
 
+def _visible_text(html: str) -> str:
+    """All visible text of a page, including footers/headers that trafilatura drops
+    (that is where the legal name / org number usually sits)."""
+    try:
+        try:
+            doc = lxml_html.fromstring(html)
+        except ValueError:
+            doc = lxml_html.fromstring(html.encode("utf-8"))
+        for bad in doc.xpath("//script|//style|//noscript"):
+            bad.drop_tree()
+        title = " ".join(doc.xpath("//title/text()"))
+        return f"{title} {doc.text_content()}"
+    except Exception:
+        return ""
+
+
 def _fetch_page_sync(url: str) -> Page:
     """Fetch a URL with trafilatura; keep text, links and date metadata."""
     downloaded = trafilatura.fetch_url(url)
@@ -434,7 +451,8 @@ def _fetch_page_sync(url: str) -> Page:
         no_fallback=False,
     ) or ""
     published, modified = _extract_page_dates(downloaded)
-    return Page(url, text, _extract_links(downloaded, url), published, modified)
+    return Page(url, text, _extract_links(downloaded, url), published, modified,
+                _visible_text(downloaded))
 
 
 async def _fetch_page(url: str) -> Page:
@@ -600,6 +618,27 @@ def _validate_news(
     return item.model_copy(update={"source_url": source_page.url}), ""
 
 
+def verify_pages(pages: list[Page], validator: DomainValidator) -> list[Page]:
+    """Keep only pages whose domain is grounded in the entity's name / org number.
+
+    Pages with no content are left alone (nothing to ground, nothing reaches the LLM).
+    """
+    by_domain: dict[str | None, list[Page]] = {}
+    for p in pages:
+        by_domain.setdefault(registrable_domain(p.url), []).append(p)
+    for domain, group in by_domain.items():
+        fetched = [p for p in group if p.text or p.links]
+        if not fetched:
+            continue
+        grounded = any(
+            validator.text_names_entity(f"{p.raw_text} {p.text} {' '.join(t for t, _ in p.links)}")
+            for p in fetched
+        )
+        if not grounded:
+            validator.verify_content(fetched[0].url, None)  # records rejection + logs reason
+    return [p for p in pages if validator.check(p.url).accepted]
+
+
 def _build_profile(
     extraction: CompanyExtraction,
     enhet: Enhet,
@@ -669,8 +708,15 @@ def _build_profile(
         except ValueError as e:
             log.info("[%s] Rejected careers link %s: %s", oid, extraction.careers_url, e)
 
+    # Website must sit on a domain whose fetched content named the entity.
+    website = extraction.website
+    site_dom = registrable_domain(website.fact_value) if website and website.fact_value else None
+    if site_dom and site_dom not in {registrable_domain(p.url) for p in pages if p.text or p.links}:
+        log.info("[%s] Rejected website %s: %s", oid, website.fact_value, CONTENT_MISMATCH_REASON)
+        website = SourcedFact()
+
     return CompanyProfile(
-        website=extraction.website,
+        website=website,
         ceo_name=extraction.ceo_name,
         employee_count=extraction.employee_count,
         latest_revenue_nok=extraction.latest_revenue_nok,
@@ -761,6 +807,13 @@ async def extract_company_profile(
         return validator.sanitize_profile(CompanyProfile(
             summary_of_changes=f"No readable content could be retrieved from the verified sites of {enhet.navn}."
         ))
+
+    # 2b. Content verification: a domain stays only if one of its pages names the
+    # entity (exact Brreg name or org number). Otherwise it is rejected, the
+    # website becomes null and the Brreg baseline takes over.
+    pages = verify_pages(pages, validator)
+    if not any(p.text or p.links for p in pages):
+        return validator.sanitize_profile(CompanyProfile(summary_of_changes=CONTENT_MISMATCH_REASON))
 
     # ------------------------------------------------------------------
     # 3. Build prompt and call Gemini via instructor
