@@ -618,6 +618,15 @@ def _validate_news(
     return item.model_copy(update={"source_url": source_page.url}), ""
 
 
+def _grounding_text(page: Page) -> str:
+    """Everything on a page that may carry the legal name / org number."""
+    return f"{page.raw_text} {page.text} {' '.join(t for t, _ in page.links)}"
+
+
+def _is_grounded(page: Page, validator: DomainValidator) -> bool:
+    return validator.text_names_entity(_grounding_text(page))
+
+
 def verify_pages(pages: list[Page], validator: DomainValidator) -> list[Page]:
     """Keep only pages whose domain is grounded in the entity's name / org number.
 
@@ -630,13 +639,123 @@ def verify_pages(pages: list[Page], validator: DomainValidator) -> list[Page]:
         fetched = [p for p in group if p.text or p.links]
         if not fetched:
             continue
-        grounded = any(
-            validator.text_names_entity(f"{p.raw_text} {p.text} {' '.join(t for t, _ in p.links)}")
-            for p in fetched
-        )
+        grounded = any(_is_grounded(p, validator) for p in fetched)
         if not grounded:
             validator.verify_content(fetched[0].url, None)  # records rejection + logs reason
     return [p for p in pages if validator.check(p.url).accepted]
+
+
+# --- Grounding fallback crawl ---------------------------------------------
+# When no fetched page of a domain names the entity, the legal name / org number
+# often sits on an "about" or "contact" page (or in a legal/privacy page linked
+# from the footer). Before rejecting the domain we look there - same domain only,
+# at most GROUNDING_MAX_DEPTH link layers and GROUNDING_MAX_FETCHES extra fetches
+# per domain. The match itself is unchanged: validator.text_names_entity.
+
+GROUNDING_MAX_DEPTH = 2
+GROUNDING_MAX_FETCHES = 4
+GROUNDING_FETCH_TIMEOUT = 5.0
+# Probed on the site root when the fetched pages link to no about/contact/legal page.
+GROUNDING_FALLBACK_PATHS = ("/om-oss", "/kontakt", "/about", "/contact")
+# Higher-priority hints first: about/contact, then legal pages usually linked from the footer.
+_GROUNDING_HINTS = (
+    re.compile(r"\b(om[\s_-]?oss|about|who[\s_-]?we[\s_-]?are|hvem[\s_-]?(er[\s_-]?)?vi|"
+               r"selskapet|company|firma|kontakt|contact)", re.IGNORECASE),
+    re.compile(r"\b(impressum|personvern|privacy|cookie|vilk[aå]r|terms|legal|juridisk)", re.IGNORECASE),
+)
+_NON_HTML_RE = re.compile(r"\.(pdf|jpe?g|png|gif|svg|webp|zip|docx?|xlsx?|pptx?|mp4|mp3)$", re.IGNORECASE)
+
+
+def _grounding_candidates(pages: list[Page], domain: str, seen: set[str]) -> list[str]:
+    """Same-domain about/contact/legal links from *pages*, best first, not yet in *seen*."""
+    ranked: list[tuple[int, int, str]] = []
+    picked: set[str] = set()
+    for page in pages:
+        for text, href in page.links:
+            if registrable_domain(href) != domain:
+                continue
+            path = urlparse(href).path
+            if _NON_HTML_RE.search(path):
+                continue
+            key = _canon(href)
+            if key in seen or key in picked:
+                continue
+            haystack = f"{path.replace('/', ' ')} {text}"
+            rank = next((i for i, rx in enumerate(_GROUNDING_HINTS) if rx.search(haystack)), None)
+            if rank is not None:
+                picked.add(key)
+                ranked.append((rank, len(ranked), href))
+    return [href for _, _, href in sorted(ranked)]
+
+
+async def _fetch_page_once(url: str) -> Page:
+    """Single-attempt fetch for grounding probes: a missing /about page is a 404,
+    not a transient error, so it is not worth the retry/backoff cycle."""
+    loop = asyncio.get_running_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, partial(_fetch_page_sync, url)),
+            timeout=GROUNDING_FETCH_TIMEOUT,
+        )
+    except Exception:
+        return Page(url)
+
+
+async def _find_grounding_page(
+    domain: str, fetched: list[Page], validator: DomainValidator, fetch,
+) -> Page | None:
+    """Breadth-first search for a same-domain page that names the entity."""
+    seen = {_canon(p.url) for p in fetched}
+    budget = GROUNDING_MAX_FETCHES
+    layer = fetched
+    for depth in range(1, GROUNDING_MAX_DEPTH + 1):
+        candidates = _grounding_candidates(layer, domain, seen)
+        if candidates:
+            # Leave room for the next layer (an about page linking to contact/legal).
+            layers_left = GROUNDING_MAX_DEPTH - depth + 1
+            candidates = candidates[:-(-budget // layers_left)]
+        elif depth == 1:
+            # Nothing promising linked: probe the usual paths on the site root.
+            root = urlparse(fetched[0].url)
+            base = f"{root.scheme or 'https'}://{root.hostname}"
+            candidates = [base + path for path in GROUNDING_FALLBACK_PATHS
+                          if _canon(base + path) not in seen][:budget]
+        if not candidates:
+            return None
+        budget -= len(candidates)
+        seen.update(_canon(c) for c in candidates)
+        layer = [p for p in await asyncio.gather(*[fetch(c) for c in candidates])
+                 if (p.text or p.links) and registrable_domain(p.url) == domain]
+        for page in layer:
+            if _is_grounded(page, validator):
+                log.info("[%s] Grounded %s via %s", validator.enhet.organisasjonsnummer, domain, page.url)
+                return page
+        if budget <= 0:
+            return None
+    return None
+
+
+async def ground_pages(pages: list[Page], validator: DomainValidator, fetch=None) -> list[Page]:
+    """:func:`verify_pages`, but a domain whose fetched pages do not name the entity
+    first gets a bounded look at its about/contact pages. The page that names the
+    entity is added to the result (it is the entity's own site and useful context)."""
+    fetch = fetch or _fetch_page_once
+    by_domain: dict[str, list[Page]] = {}
+    for p in pages:
+        dom = registrable_domain(p.url)
+        if dom and (p.text or p.links):
+            by_domain.setdefault(dom, []).append(p)
+    pending = {
+        dom: group for dom, group in by_domain.items()
+        if validator.check(group[0].url).accepted
+        and not any(_is_grounded(p, validator) for p in group)
+    }
+    if pending:
+        found = await asyncio.gather(*[
+            _find_grounding_page(dom, group, validator, fetch) for dom, group in pending.items()
+        ])
+        pages = pages + [p for p in found if p is not None]
+    return verify_pages(pages, validator)
 
 
 def _build_profile(
@@ -809,9 +928,10 @@ async def extract_company_profile(
         ))
 
     # 2b. Content verification: a domain stays only if one of its pages names the
-    # entity (exact Brreg name or org number). Otherwise it is rejected, the
-    # website becomes null and the Brreg baseline takes over.
-    pages = verify_pages(pages, validator)
+    # entity (exact Brreg name or org number). If the fetched pages do not, the
+    # domain's about/contact pages are checked first (bounded crawl). Otherwise it
+    # is rejected, the website becomes null and the Brreg baseline takes over.
+    pages = await ground_pages(pages, validator)
     if not any(p.text or p.links for p in pages):
         return validator.sanitize_profile(CompanyProfile(summary_of_changes=CONTENT_MISMATCH_REASON))
 
