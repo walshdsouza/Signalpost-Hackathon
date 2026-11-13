@@ -113,6 +113,21 @@ def is_ui_label(text: str) -> bool:
     return len(norm.split()) <= _UI_LABEL_MAX_WORDS and bool(_UI_LABEL_RE.match(norm))
 
 
+def article_url_problem(url: str) -> str | None:
+    """Why *url* is not a direct article URL (site root, listing, product...), or None."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return f"url {url!r} is not an absolute http(s) URL"
+    segments = [s for s in parsed.path.lower().split("/") if s]
+    if not segments:
+        return f"url {url!r} is a site root, not an article"
+    if segments[0] in _NON_ARTICLE_SEGMENTS:
+        return f"url {url!r} is a {segments[0]!r} page, not news"
+    if segments[-1].rsplit(".", 1)[0] in _LISTING_SEGMENTS:
+        return f"url {url!r} is a news listing page, not an article"
+    return None
+
+
 class NewsItem(BaseModel):
     """A single real news article or press release published by the company.
 
@@ -156,16 +171,9 @@ class NewsItem(BaseModel):
     @classmethod
     def _url_is_article(cls, v: str) -> str:
         v = v.strip()
-        parsed = urlparse(v)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            raise ValueError(f"url {v!r} is not an absolute http(s) URL")
-        segments = [s for s in parsed.path.lower().split("/") if s]
-        if not segments:
-            raise ValueError(f"url {v!r} is a site root, not an article")
-        if segments[0] in _NON_ARTICLE_SEGMENTS:
-            raise ValueError(f"url {v!r} is a {segments[0]!r} page, not news")
-        if segments[-1].rsplit(".", 1)[0] in _LISTING_SEGMENTS:
-            raise ValueError(f"url {v!r} is a news listing page, not an article")
+        problem = article_url_problem(v)
+        if problem:
+            raise ValueError(problem)
         return v
 
     @field_validator("date_type")
@@ -318,6 +326,105 @@ def validate_careers_url(url: str) -> str:
     return url
 
 
+# ---------------------------------------------------------------------------
+# Synthesis: page-grounded company news and open job postings
+# ---------------------------------------------------------------------------
+# Both are built by the site crawler (not the LLM) from a page that was fetched
+# on its own URL and whose text names the entity exactly (Brreg name or org
+# number). ``entity_evidence`` quotes that mention from the item's own page.
+
+class CompanyNewsItem(NewsItem):
+    """A dated news item from the company's own site, grounded on its own page.
+
+    Inherits every :class:`NewsItem` rule (real headline, article URL, published
+    - never modified - date, not in the future)."""
+
+    source_url: str = Field(description="Company-owned page that links to this item.")
+    entity_evidence: str = Field(
+        min_length=4,
+        description="Verbatim text from the item's own page naming the entity (name or org number).",
+    )
+
+
+# Applicant-tracking systems that host postings for a company's own careers
+# page (registrable domains). A posting there is only used when the company's
+# own site links to it and the posting page itself names the entity.
+ATS_DOMAINS = {
+    "webcruiter.no", "webcruiter.com", "jobbnorge.no", "recman.no", "hrmanager.no",
+    "easycruit.com", "teamtailor.com", "jobylon.com", "varbi.com", "reachmee.com",
+    "smartrecruiters.com", "lever.co", "greenhouse.io", "myworkdayjobs.com",
+}
+
+# Titles that are the careers section itself, not one posting.
+_GENERIC_JOB_TITLES = {
+    "jobs", "job", "careers", "career", "karriere", "jobb", "jobbe hos oss", "jobb hos oss",
+    "ledige stillinger", "ledige jobber", "stillinger", "open positions", "open roles",
+    "vacancies", "current vacancies", "join us", "join our team", "work with us",
+    "apply now", "søk nå", "sok na", "søk her", "apply", "all jobs", "see all jobs",
+    "se alle stillinger", "alle stillinger", "available positions", "job openings",
+}
+
+
+class JobPosting(BaseModel):
+    """One open job posting, grounded on its own page.
+
+    Constructing one raises ``ValidationError`` for a generic careers label, a
+    non-http(s) URL, a site root, or a posting whose deadline has passed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(description="Job title as shown on the posting page.")
+    url: str = Field(description="Direct URL of this posting.")
+    source_url: str = Field(description="Company-owned page that links to this posting.")
+    entity_evidence: str = Field(
+        min_length=4,
+        description="Verbatim text from the posting page naming the entity (name or org number).",
+    )
+    date_posted: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    valid_through: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Application deadline (YYYY-MM-DD) if stated; never in the past.",
+    )
+    location: str | None = None
+    retrieval_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+    @field_validator("title")
+    @classmethod
+    def _title_is_a_role(cls, v: str) -> str:
+        v = " ".join(v.split())
+        norm = _normalise_label(v)
+        if not norm or norm in _GENERIC_JOB_TITLES or norm in _UI_LABELS or is_ui_label(v):
+            raise ValueError(f"title {v!r} is a careers/navigation label, not a posting")
+        if len(v) < 4 or len(v) > 160:
+            raise ValueError(f"title {v!r} does not look like a job title")
+        return v
+
+    @field_validator("url")
+    @classmethod
+    def _url_is_a_posting(cls, v: str) -> str:
+        v = v.strip()
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError(f"url {v!r} is not an absolute http(s) URL")
+        if not [s for s in parsed.path.split("/") if s] and not parsed.query:
+            raise ValueError(f"url {v!r} is a site root, not a posting")
+        return v
+
+    @field_validator("date_posted")
+    @classmethod
+    def _posted_not_future(cls, v: str | None) -> str | None:
+        if v is not None and date.fromisoformat(v) > date.today():
+            raise ValueError(f"date_posted {v} is in the future")
+        return v
+
+    @field_validator("valid_through")
+    @classmethod
+    def _still_open(cls, v: str | None) -> str | None:
+        if v is not None and date.fromisoformat(v) < date.today():
+            raise ValueError(f"posting closed on {v}")
+        return v
+
+
 class SocialCandidate(BaseModel):
     """Lenient shape the LLM fills in; validated by :func:`normalise_social_url`."""
 
@@ -385,6 +492,14 @@ class CompanyProfile(_ProfileFacts):
             "URL of THIS company's own careers / open-positions page (fact_value). "
             "Never a parent or group careers page."
         ),
+    )
+    company_news: list[CompanyNewsItem] = Field(
+        default_factory=list,
+        description="Dated news items linked from the company's own site whose own page names the entity.",
+    )
+    job_postings: list[JobPosting] = Field(
+        default_factory=list,
+        description="Open job postings linked from the company's own site whose own page names the entity.",
     )
 
 

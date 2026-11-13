@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 from brreg_client import BASE_URL, Enhet, lookup_enhet
 from entity_matcher import is_same_company, normalise_name
-from schema import SOCIAL_PLATFORMS, CompanyProfile
+from schema import ATS_DOMAINS, SOCIAL_PLATFORMS, CompanyProfile
 
 log = logging.getLogger(__name__)
 
@@ -161,6 +161,25 @@ class DomainValidator:
         pattern = r"(?<!\d)" + r"[\s. ]?".join(orgnr[i:i + 3] for i in (0, 3, 6)) + r"(?!\d)"
         return re.search(pattern, text) is not None
 
+    def entity_mention(self, text: str | None, context: int = 40) -> str | None:
+        """Quote of where *text* names the entity, for evidence only.
+
+        Returns ``None`` exactly when :meth:`text_names_entity` is False; the
+        decision itself is always made by :meth:`text_names_entity`."""
+        if not self.text_names_entity(text):
+            return None
+        flat = " ".join(text.split())
+        name_rx = r"\s+".join(re.escape(tok) for tok in self.enhet.navn.split())
+        orgnr = _digits_only(self.enhet.organisasjonsnummer)
+        patterns = [name_rx]
+        if len(orgnr) == 9:
+            patterns.append(r"(?<!\d)" + r"[\s. ]?".join(orgnr[i:i + 3] for i in (0, 3, 6)) + r"(?!\d)")
+        for rx in patterns:
+            if m := re.search(rx, flat, re.IGNORECASE):
+                start, end = max(0, m.start() - context), min(len(flat), m.end() + context)
+                return flat[start:end].strip()
+        return self.enhet.navn  # casefold-only match (e.g. 'ß'): name is on the page
+
     def verify_content(self, url: str, text: str | None) -> Verdict:
         """Grounding check on a fetched page. A failing domain is rejected for good
         (``check`` refuses it afterwards) and one reason line is logged."""
@@ -256,6 +275,20 @@ class DomainValidator:
                          item.get("url"), verdict.reason)
         intel["news"] = kept_news
 
+        # Page-grounded news / job postings: never from a parent's site, never from
+        # a domain whose content failed grounding; news must be on a validated domain.
+        for key, own_domain_only in (("company_news", True), ("job_postings", False)):
+            kept = []
+            for item in intel.get(key) or []:
+                reason = self._activity_reject_reason(item, own_domain_only)
+                if reason:
+                    log.info("[%s] Dropped %s %r: %s", self.enhet.organisasjonsnummer,
+                             key, item.get("url"), reason)
+                else:
+                    kept.append(item)
+            if key in intel or kept:
+                intel[key] = kept
+
         # Socials must not be a parent/group's accounts.
         socials = intel.get("socials") or {}
         for platform in SOCIAL_PLATFORMS:
@@ -297,6 +330,30 @@ class DomainValidator:
                 "retrieval_date": str(date.today()),
             }
         return intel
+
+    def _activity_reject_reason(self, item: dict, own_domain_only: bool) -> str | None:
+        """Why a company_news / job_postings item may not be attributed, or None.
+
+        The item must be linked from a page on a validated own domain. Its URL must
+        be on a validated own domain too (news), or - for jobs hosted on an
+        applicant-tracking system - at least not on a parent's / rejected domain."""
+        source = self.check(item.get("source_url"))
+        if not source.accepted:
+            return f"source page rejected: {source.reason}"
+        url = item.get("url")
+        if own_domain_only:
+            verdict = self.check(url)
+            return None if verdict.accepted else verdict.reason
+        domain = registrable_domain(url)
+        if domain is None:
+            return "not a valid URL"
+        if domain in self.ancestor_domains:
+            return f"{domain} belongs to a parent group"
+        if domain in self.content_rejected:
+            return CONTENT_MISMATCH_REASON
+        if domain not in ATS_DOMAINS and not self.check(url).accepted:
+            return f"{domain} is neither a validated own domain nor a known applicant-tracking system"
+        return None
 
     def sanitize_profile(self, profile: CompanyProfile) -> CompanyProfile:
         data = self.clean_intel(profile.model_dump())

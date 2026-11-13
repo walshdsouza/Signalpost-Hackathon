@@ -101,6 +101,19 @@ def apply_diff_and_reconciliation(
     if added:
         changes.append(f"Discovered {added} new news item{'s' if added != 1 else ''}.")
 
+    # Page-grounded company news accumulates the same way. Job postings are NOT
+    # carried forward: a posting missing from this run may have closed.
+    merged_cn, added = _merge_news(cached_intel.get("company_news") or [],
+                                   new_intel.get("company_news") or [])
+    reconciled_intel["company_news"] = merged_cn
+    if added:
+        changes.append(f"Discovered {added} new company news item{'s' if added != 1 else ''}.")
+    old_jobs = {j.get("url") for j in cached_intel.get("job_postings") or []}
+    new_jobs = {j.get("url") for j in new_intel.get("job_postings") or []}
+    if new_jobs - old_jobs:
+        n = len(new_jobs - old_jobs)
+        changes.append(f"Discovered {n} new job posting{'s' if n != 1 else ''}.")
+
     if not changes:
         summary = "All fields match existing cache. Zero changes detected."
     else:

@@ -22,11 +22,12 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 from functools import partial
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import instructor
 import trafilatura
+from trafilatura import downloads as trafilatura_downloads
 from dotenv import load_dotenv
 from duckduckgo_search import DDGS
 from lxml import html as lxml_html
@@ -43,13 +44,18 @@ from pydantic import ValidationError
 from brreg_client import Enhet
 from domain_validator import CONTENT_MISMATCH_REASON, DomainValidator, registrable_domain
 from schema import (
+    ATS_DOMAINS,
     PLATFORM_HOSTS,
     SOCIAL_PLATFORMS,
     CompanyExtraction,
     CAREERS_HINT_RE,
+    CompanyNewsItem,
     CompanyProfile,
+    JobPosting,
     NewsCandidate,
     NewsItem,
+    article_url_problem,
+    is_ui_label,
     Socials,
     SourcedFact,
     normalise_platform,
@@ -364,6 +370,9 @@ class Page:
     published: str | None = None  # from page metadata (YYYY-MM-DD)
     modified: str | None = None   # from page metadata (YYYY-MM-DD) - never a publish date
     raw_text: str = ""            # all visible text incl. footer/header (for entity grounding only)
+    headline: str = ""            # og:title, else first <h1>
+    json_ld: list[dict] = field(default_factory=list)  # flattened JSON-LD objects
+    offsite_redirect: str | None = None  # final URL when the fetch left the domain (page dropped)
 
 
 _META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
@@ -439,11 +448,60 @@ def _visible_text(html: str) -> str:
         return ""
 
 
+def _flatten_json_ld(data) -> list[dict]:
+    if isinstance(data, list):
+        return [o for item in data for o in _flatten_json_ld(item)]
+    if not isinstance(data, dict):
+        return []
+    return [data] + _flatten_json_ld(data.get("@graph", []))
+
+
+def _extract_structure(html: str) -> tuple[str, list[dict]]:
+    """Headline (og:title, else first <h1>) and flattened JSON-LD objects."""
+    try:
+        try:
+            doc = lxml_html.fromstring(html)
+        except ValueError:
+            doc = lxml_html.fromstring(html.encode("utf-8"))
+    except Exception:
+        return "", []
+    headline = ""
+    og = doc.xpath("//meta[@property='og:title' or @name='og:title']/@content")
+    if og and og[0].strip():
+        headline = og[0]
+    else:
+        h1 = doc.xpath("//h1")
+        if h1:
+            headline = h1[0].text_content()
+    objects: list[dict] = []
+    for script in doc.xpath("//script[@type='application/ld+json']"):
+        try:
+            objects += _flatten_json_ld(json.loads(script.text_content(), strict=False))
+        except (ValueError, TypeError):
+            continue
+    return " ".join(headline.split()), objects
+
+
+def _download(url: str) -> tuple[str | None, str | None]:
+    """(html, offsite_final_url). A fetch whose redirects end on another
+    registrable domain is dropped: its content belongs to a third party."""
+    response = trafilatura_downloads.fetch_response(url, decode=True)
+    if not response or not response.data:
+        return None, None
+    final = urljoin(url, getattr(response, "url", None) or url)  # may be relative ("/")
+    if registrable_domain(final) != registrable_domain(url):
+        log.info("Dropped %s: redirected off-site to %s", url, final)
+        return None, final
+    if not trafilatura_downloads._is_suitable_response(url, response, trafilatura_downloads.Extractor()):
+        return None, None
+    return response.html, None
+
+
 def _fetch_page_sync(url: str) -> Page:
     """Fetch a URL with trafilatura; keep text, links and date metadata."""
-    downloaded = trafilatura.fetch_url(url)
+    downloaded, offsite = _download(url)
     if downloaded is None:
-        return Page(url)
+        return Page(url, offsite_redirect=offsite)
     text = trafilatura.extract(
         downloaded,
         include_comments=False,
@@ -451,8 +509,9 @@ def _fetch_page_sync(url: str) -> Page:
         no_fallback=False,
     ) or ""
     published, modified = _extract_page_dates(downloaded)
+    headline, json_ld = _extract_structure(downloaded)
     return Page(url, text, _extract_links(downloaded, url), published, modified,
-                _visible_text(downloaded))
+                _visible_text(downloaded), headline, json_ld)
 
 
 async def _fetch_page(url: str) -> Page:
@@ -468,6 +527,8 @@ async def _fetch_page(url: str) -> Page:
             )
         except TimeoutError:
             raise TransientFetchError("timeout") from None
+        if page.offsite_redirect:
+            return page  # deterministic: retrying would redirect off-site again
         if not (page.text or page.links):
             raise TransientFetchError("no content (blocked or rate limited)")
         return page
@@ -758,6 +819,362 @@ async def ground_pages(pages: list[Page], validator: DomainValidator, fetch=None
     return verify_pages(pages, validator)
 
 
+# ---------------------------------------------------------------------------
+# Synthesis: company news + open job postings from the company's own site
+# ---------------------------------------------------------------------------
+# Deterministic (no LLM). From the grounded pages we find news and careers hubs
+# (/news, /nyheter, /careers, /karriere ... or the links pointing there), collect
+# the individual article / posting links and fetch each one. GOLDEN RULE: an item
+# is kept only if ITS OWN page passes validator.text_names_entity (exact Brreg
+# name or org number). Everything is same-domain, except postings hosted on a
+# known applicant-tracking system that the company's own site links to.
+
+ACTIVITY_MAX_HUBS = 2         # listing pages per kind (news / jobs)
+ACTIVITY_MAX_ITEMS = 5        # individual pages fetched per kind
+ACTIVITY_MAX_NEWS = 5
+ACTIVITY_MAX_JOBS = 10
+NEWS_HUB_PATHS = ("/nyheter", "/news")
+JOBS_HUB_PATHS = ("/karriere", "/careers", "/ledige-stillinger")
+# Hard ceiling on extra fetches per company: news hubs + nested sub-hubs + job
+# hubs (or probes) + item pages. Every URL is fetched at most once.
+ACTIVITY_MAX_FETCHES = (ACTIVITY_MAX_HUBS + max(ACTIVITY_MAX_HUBS, len(NEWS_HUB_PATHS))
+                        + max(ACTIVITY_MAX_HUBS, len(JOBS_HUB_PATHS)) + 2 * ACTIVITY_MAX_ITEMS)
+
+_NEWS_HUB_RE = re.compile(
+    r"^(news|nyheter|nyhet|aktuelt|nytt|presse|press|pressemeldinger|press-releases|"
+    r"newsroom|media|blogg?|artikler|articles|stories|insights)$", re.IGNORECASE)
+_JOB_CUE_RE = re.compile(
+    r"(søknadsfrist|soknadsfrist|søk på stillingen|søk stillingen|send søknad|søk her|"
+    r"apply now|apply for this|apply here|application deadline|ansettelsesform|"
+    r"stillingsprosent|employment type|arbeidssted|tiltredelse|job type|full[- ]time|heltid|deltid)",
+    re.IGNORECASE)
+_JOB_CLOSED_RE = re.compile(
+    r"(stillingen er besatt|stillingen er ikke lenger ledig|søknadsfristen er (?:utløpt|gått ut)|"
+    r"position has been filled|no longer accepting applications|this (?:job|position) (?:is|has) (?:closed|expired)|"
+    r"job (?:has )?expired)", re.IGNORECASE)
+
+_MONTHS = {
+    "jan": 1, "januar": 1, "january": 1, "feb": 2, "februar": 2, "february": 2,
+    "mar": 3, "mars": 3, "march": 3, "apr": 4, "april": 4, "mai": 5, "may": 5,
+    "jun": 6, "juni": 6, "june": 6, "jul": 7, "juli": 7, "july": 7, "aug": 8, "august": 8,
+    "sep": 9, "sept": 9, "september": 9, "okt": 10, "oktober": 10, "oct": 10, "october": 10,
+    "nov": 11, "november": 11, "des": 12, "desember": 12, "dec": 12, "december": 12,
+}
+_MONTH_RX = "|".join(sorted(_MONTHS, key=len, reverse=True))
+_DATE_RX = (
+    r"(?:(?P<y1>\d{4})-(?P<m1>\d{1,2})-(?P<d1>\d{1,2})"
+    r"|(?P<d2>\d{1,2})[./](?P<m2>\d{1,2})[./](?P<y2>\d{4})"
+    rf"|(?P<d3>\d{{1,2}})\.?\s+(?P<mn3>{_MONTH_RX})\.?\s+(?P<y3>\d{{4}})"
+    rf"|(?P<mn4>{_MONTH_RX})\.?\s+(?P<d4>\d{{1,2}}),?\s+(?P<y4>\d{{4}}))"
+)
+_PUBLISHED_TEXT_RE = re.compile(
+    rf"\b(?:publisert|published|posted|publiseringsdato)\b\s*(?:on|den|:)?\s*:?\s*{_DATE_RX}", re.IGNORECASE)
+_DEADLINE_TEXT_RE = re.compile(
+    rf"\b(?:søknadsfrist|soknadsfrist|application deadline|deadline|frist)\b\s*:?\s*{_DATE_RX}", re.IGNORECASE)
+
+
+def _iso_from_match(m: re.Match) -> str | None:
+    g = m.groupdict()
+    for y, mo, d in (("y1", "m1", "d1"), ("y2", "m2", "d2"), ("y3", "mn3", "d3"), ("y4", "mn4", "d4")):
+        if g.get(y):
+            month = g[mo]
+            month = _MONTHS.get(month.lower().rstrip(".")) if not month.isdigit() else int(month)
+            try:
+                return date(int(g[y]), int(month), int(g[d])).isoformat()
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _labelled_date(rx: re.Pattern, text: str) -> tuple[str, str] | None:
+    """(YYYY-MM-DD, verbatim evidence) for the first labelled date in *text*."""
+    m = rx.search(" ".join(text.split()))
+    if not m:
+        return None
+    iso = _iso_from_match(m)
+    return (iso, m.group(0)) if iso else None
+
+
+def _ld_date(value) -> str | None:
+    m = _ISO_DATE_RE.search(str(value or ""))
+    return m.group(1) if m else None
+
+
+def _ld_type(obj: dict) -> set[str]:
+    t = obj.get("@type")
+    return {str(x).lower() for x in (t if isinstance(t, list) else [t])}
+
+
+def _ld_location(obj: dict) -> str | None:
+    locs = obj.get("jobLocation")
+    for loc in (locs if isinstance(locs, list) else [locs]):
+        addr = (loc or {}).get("address") if isinstance(loc, dict) else None
+        if isinstance(addr, dict):
+            parts = [addr.get("addressLocality"), addr.get("addressRegion")]
+            text = ", ".join(str(p) for p in parts if p)
+            if text:
+                return text
+        elif isinstance(addr, str) and addr.strip():
+            return addr.strip()
+    return None
+
+
+def _path_segments(url: str) -> list[str]:
+    return [s for s in urlparse(url).path.lower().split("/") if s]
+
+
+def _is_ats(url: str) -> bool:
+    return registrable_domain(url) in ATS_DOMAINS
+
+
+def _is_news_hub(text: str, href: str) -> bool:
+    segs = _path_segments(href)
+    last = segs[-1].rsplit(".", 1)[0] if segs else ""
+    return bool(_NEWS_HUB_RE.match(last)) or (len(segs) <= 2 and bool(_NEWS_HUB_RE.match(_fold(text))))
+
+
+_JOB_HUB_SEGMENT_RE = re.compile(
+    r"^(jobs?|careers?|karriere|jobb|jobbe?-hos-oss|stillinger|ledige-stillinger|ledige-jobber|"
+    r"vacancies|positions|open-positions|join-us|work-with-us|companyadverts)$", re.IGNORECASE)
+
+
+def _is_job_hub(text: str, href: str) -> bool:
+    """A careers listing page (not one posting)."""
+    segs = _path_segments(href)
+    last = segs[-1].rsplit(".", 1)[0] if segs else ""
+    if _JOB_HUB_SEGMENT_RE.match(last):
+        return True
+    if _is_ats(href):
+        return len(segs) <= 1
+    return not segs[1:] and bool(CAREERS_HINT_RE.search(f"{last} {text}"))
+
+
+def _looks_like_headline(text: str) -> bool:
+    return len(text) >= 12 and len(text.split()) >= 3 and not is_ui_label(text)
+
+
+@dataclass
+class _Lead:
+    url: str
+    anchor: str
+    source: str  # company-owned page that links (directly or via an ATS hub) to url
+
+
+def _hub_links(site: list[Page], domain_ok, is_hub) -> list[_Lead]:
+    seen: set[str] = set()
+    hubs: list[_Lead] = []
+    for page in site:
+        for text, href in page.links:
+            key = _canon(href)
+            if key in seen or not domain_ok(href) or not is_hub(text, href):
+                continue
+            seen.add(key)
+            hubs.append(_Lead(href, text, page.url))
+    return sorted(hubs, key=lambda h: len(_path_segments(h.url)))
+
+
+_NEWS_SECTION_WORD_RE = re.compile(r"(nyhet|news|press|reportasj|artikl|article|blog|aktuelt|media)", re.IGNORECASE)
+
+
+def _slug_tokens(href: str) -> list[str]:
+    segs = _path_segments(href)
+    return [t for t in re.split(r"[-_.]+", segs[-1]) if t] if segs else []
+
+
+def _is_news_subhub(href: str) -> bool:
+    """A short section slug such as /aktuelt/nyheter-og-reportasjer (a listing, not an article)."""
+    last = "-".join(_slug_tokens(href))
+    return bool(last) and len(_slug_tokens(href)) <= 3 and not re.search(r"\d", last) and bool(
+        _NEWS_SECTION_WORD_RE.search(last))
+
+
+def _article_score(href: str) -> int:
+    """Article-likeness of a URL: long slugs, ids and years in the path."""
+    score = len(_slug_tokens(href))
+    if re.search(r"\d", "".join(_slug_tokens(href))) or re.search(r"/20\d\d/", urlparse(href).path):
+        score += 3
+    return score
+
+
+def _news_leads(sources: list[tuple[Page, str, bool]], domain: set[str], skip: set[str]) -> list[_Lead]:
+    """Article links: from news hubs (below the hub's path), or newsy-path links
+    with a headline anchor anywhere on the site. Hub links and article-like
+    URLs first."""
+    ranked: list[tuple[int, int, _Lead]] = []
+    seen = set(skip)
+    for page, owner, from_hub in sources:
+        hub_path = urlparse(page.url).path.rstrip("/") + "/"
+        for text, href in page.links:
+            key = _canon(href)
+            if key in seen or registrable_domain(href) not in domain or article_url_problem(href):
+                continue
+            path = urlparse(href).path
+            if _is_news_hub(text, href) or _is_news_subhub(href) or _is_job_hub(text, href):
+                continue
+            if from_hub:
+                if not (path.startswith(hub_path) or _NEWSY_PATH_RE.search(path)):
+                    continue
+                if not (_looks_like_headline(text) or _article_score(href) >= 4):
+                    continue
+            elif not (_NEWSY_PATH_RE.search(path) and _looks_like_headline(text) and len(_path_segments(href)) >= 2):
+                continue
+            seen.add(key)
+            ranked.append((0 if from_hub else 1, -_article_score(href), _Lead(href, text, owner)))
+    return [lead for *_, lead in sorted(ranked, key=lambda r: (r[0], r[1]))]
+
+
+def _job_leads(sources: list[tuple[Page, str]], domain: set[str], skip: set[str]) -> list[_Lead]:
+    leads, seen = [], set(skip)
+    for page, owner in sources:
+        hub_host = (urlparse(page.url).hostname or "").lower()
+        for text, href in page.links:
+            key = _canon(href)
+            if key in seen:
+                continue
+            host = (urlparse(href).hostname or "").lower()
+            if _is_job_hub(text, href):
+                continue
+            if registrable_domain(href) in domain:
+                # Own site: a careers path below the hub (/karriere/<posting>).
+                if not CAREERS_HINT_RE.search(urlparse(href).path):
+                    continue
+            elif _is_ats(href):
+                # On an ATS board only follow the same host (one company's board).
+                if _is_ats(page.url) and host != hub_host:
+                    continue
+            else:
+                continue
+            seen.add(key)
+            leads.append(_Lead(href, text, owner))
+    # Postings on an ATS or with an id / long slug first; career-info pages last.
+    return sorted(leads, key=lambda lead: (not _is_ats(lead.url), -_article_score(lead.url)))
+
+
+def _news_item(page: Page, lead: _Lead, evidence: str, today: str) -> CompanyNewsItem:
+    """Build a news item from its own fetched page (raises ValidationError/ValueError)."""
+    if page.published:
+        published, date_evidence = page.published, f"datePublished {page.published} (page metadata)"
+    elif found := _labelled_date(_PUBLISHED_TEXT_RE, page.raw_text or page.text):
+        published, date_evidence = found
+    else:
+        raise ValueError("no publication date on the article page")
+    title = page.headline if _looks_like_headline(page.headline) else lead.anchor
+    return CompanyNewsItem(
+        title=title, url=lead.url, published_date=published, date_type="published",
+        date_evidence=date_evidence, source_url=lead.source, entity_evidence=evidence,
+        retrieval_date=today,
+    )
+
+
+def _job_posting(page: Page, lead: _Lead, evidence: str, navn: str, today: str) -> JobPosting:
+    """Build a posting from its own fetched page (raises ValidationError/ValueError)."""
+    text = f"{page.raw_text} {page.text}"
+    ld = next((o for o in page.json_ld if "jobposting" in _ld_type(o)), None)
+    if ld is None and not _JOB_CUE_RE.search(text):
+        raise ValueError("page does not look like a job posting")
+    if _JOB_CLOSED_RE.search(text):
+        raise ValueError("posting is closed")
+    valid_through = _ld_date(ld.get("validThrough")) if ld else None
+    if not valid_through and (found := _labelled_date(_DEADLINE_TEXT_RE, text)):
+        valid_through = found[0]
+    title = " ".join(str((ld or {}).get("title") or page.headline or lead.anchor).split())
+    if _fold(title) == _fold(navn):
+        title = lead.anchor  # the page heading is just the company name
+    return JobPosting(
+        title=title, url=lead.url, source_url=lead.source, entity_evidence=evidence,
+        date_posted=_ld_date(ld.get("datePosted")) if ld else None,
+        valid_through=valid_through, location=_ld_location(ld) if ld else None,
+        retrieval_date=today,
+    )
+
+
+async def crawl_site_activity(
+    pages: list[Page], validator: DomainValidator, fetch=None,
+) -> tuple[list[CompanyNewsItem], list[JobPosting]]:
+    """Company news and open job postings, each grounded on its own page."""
+    fetch = fetch or _fetch_page_once
+    oid = validator.enhet.organisasjonsnummer
+    today = date.today().isoformat()
+    site = [p for p in pages if (p.text or p.links) and validator.check(p.url).accepted]
+    if not site:
+        return [], []
+    own = {registrable_domain(p.url) for p in site}
+    cache: dict[str, Page] = {_canon(p.url): p for p in pages if p.text or p.links}
+
+    async def get(url: str) -> Page:
+        key = _canon(url)
+        if key not in cache:
+            cache[key] = await fetch(url)
+        return cache[key]
+
+    def own_url(href: str) -> bool:
+        return registrable_domain(href) in own
+
+    # -- 1. hubs: linked listing pages, else probe the usual paths ---------------
+    news_hubs = _hub_links(site, own_url, _is_news_hub)[:ACTIVITY_MAX_HUBS]
+    job_hubs = _hub_links(site, lambda h: own_url(h) or _is_ats(h), _is_job_hub)[:ACTIVITY_MAX_HUBS]
+    root = urlparse(site[0].url)
+    base = f"{root.scheme or 'https'}://{root.hostname}"
+    if not news_hubs:
+        news_hubs = [_Lead(base + p, "", site[0].url) for p in NEWS_HUB_PATHS]
+    if not job_hubs:
+        job_hubs = [_Lead(base + p, "", site[0].url) for p in JOBS_HUB_PATHS]
+    hub_pages = await asyncio.gather(*[get(h.url) for h in news_hubs + job_hubs])
+    fetched_news_hubs = [(p, h) for p, h in zip(hub_pages[:len(news_hubs)], news_hubs) if p.text or p.links]
+    fetched_job_hubs = [(p, h) for p, h in zip(hub_pages[len(news_hubs):], job_hubs) if p.text or p.links]
+
+    # One nested level: /aktuelt -> /aktuelt/nyheter-og-reportasjer.
+    hub_keys = {_canon(h.url) for h in news_hubs + job_hubs} | {_canon(p.url) for p in site}
+    sub_hubs: list[_Lead] = []
+    for page, _ in fetched_news_hubs:
+        prefix = urlparse(page.url).path.rstrip("/") + "/"
+        for text, href in page.links:
+            if (own_url(href) and urlparse(href).path.startswith(prefix) and _is_news_subhub(href)
+                    and _canon(href) not in hub_keys | {_canon(s.url) for s in sub_hubs}):
+                sub_hubs.append(_Lead(href, text, page.url))
+    sub_hubs = sub_hubs[:ACTIVITY_MAX_HUBS]
+    if sub_hubs:
+        sub_pages = await asyncio.gather(*[get(h.url) for h in sub_hubs])
+        fetched_news_hubs += [(p, h) for p, h in zip(sub_pages, sub_hubs) if p.text or p.links]
+        hub_keys |= {_canon(h.url) for h in sub_hubs}
+
+    # A link's "source" is the company-owned page it was found on (for an ATS
+    # board: the own page that linked the board).
+    news_sources = [(p, p.url, True) for p, _ in reversed(fetched_news_hubs)] + [
+        (p, p.url, False) for p in site]
+    job_sources = [(p, p.url) for p in site] + [
+        (p, h.source if _is_ats(p.url) else p.url) for p, h in fetched_job_hubs]
+
+    # -- 2. individual items: fetch each and apply the golden rule ---------------
+    news_leads = _news_leads(news_sources, own, hub_keys)[:ACTIVITY_MAX_ITEMS]
+    job_leads = _job_leads(job_sources, own, hub_keys)[:ACTIVITY_MAX_ITEMS]
+    item_pages = await asyncio.gather(*[get(lead.url) for lead in news_leads + job_leads])
+
+    news: list[CompanyNewsItem] = []
+    jobs: list[JobPosting] = []
+    for i, (lead, page) in enumerate(zip(news_leads + job_leads, item_pages)):
+        kind = "news" if i < len(news_leads) else "job"
+        if not (page.text or page.links):
+            reason = f"redirected off-site to {page.offsite_redirect}" if page.offsite_redirect else "no content"
+            log.info("[%s] Skipped %s %s: %s", oid, kind, lead.url, reason)
+            continue
+        evidence = validator.entity_mention(_grounding_text(page))
+        if evidence is None:  # GOLDEN RULE: the item's own page must name the entity
+            log.info("[%s] Rejected %s %s: %s", oid, kind, lead.url, CONTENT_MISMATCH_REASON)
+            continue
+        try:
+            if kind == "news":
+                news.append(_news_item(page, lead, evidence, today))
+            else:
+                jobs.append(_job_posting(page, lead, evidence, validator.enhet.navn, today))
+        except (ValidationError, ValueError) as e:
+            why = _first_error(e) if isinstance(e, ValidationError) else str(e)
+            log.info("[%s] Rejected %s %s: %s", oid, kind, lead.url, why)
+
+    news.sort(key=lambda n: n.published_date, reverse=True)
+    return news[:ACTIVITY_MAX_NEWS], jobs[:ACTIVITY_MAX_JOBS]
+
+
 def _build_profile(
     extraction: CompanyExtraction,
     enhet: Enhet,
@@ -949,6 +1366,9 @@ async def extract_company_profile(
     raw_user_message = _build_user_message(enhet, search_results, pages, validator.ancestors)
     truncated_message = raw_user_message[:MAX_PROMPT_CHARS]
 
+    # Synthesis crawl (news + jobs) runs while the LLM call is in flight.
+    activity_task = asyncio.create_task(_safe_crawl_site_activity(pages, validator))
+
     global _llm_disabled_reason
     try:
         extraction, completion = await _retry_async(
@@ -967,6 +1387,7 @@ async def extract_company_profile(
         )
         record_usage(enhet.organisasjonsnummer, completion)
     except Exception as e:
+        activity_task.cancel()
         if _is_auth_error(e):
             _llm_disabled_reason = "GEMINI_API_KEY was rejected by the API"
         raise
@@ -976,7 +1397,18 @@ async def extract_company_profile(
     #    from a parent domain or an unverified site
     # ------------------------------------------------------------------
     profile = _build_profile(extraction, enhet, pages, validator)
+    company_news, job_postings = await activity_task
+    profile = profile.model_copy(update={"company_news": company_news, "job_postings": job_postings})
     return validator.sanitize_profile(profile)
+
+
+async def _safe_crawl_site_activity(pages: list[Page], validator: DomainValidator):
+    """crawl_site_activity that never fails the profile (synthesis is best-effort)."""
+    try:
+        return await crawl_site_activity(pages, validator)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[%s] Site activity crawl failed: %s", validator.enhet.organisasjonsnummer, e)
+        return [], []
 
 
 # ---------------------------------------------------------------------------

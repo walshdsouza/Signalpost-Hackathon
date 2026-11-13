@@ -107,6 +107,25 @@ Read `docs/competition-control-loop.md`, `docs/external-connectors.md` and the p
 - **Subsidiary isolation.** Brreg's parent hierarchy is resolved up front, and a `DomainValidator` checks every website, news URL, social profile and careers/jobs link against the entity's own name and its parents' domains. A subsidiary can never be credited with its parent's site, accounts, news or job listings. The same checks run on previously cached snapshots, so a parent's data cannot be carried forward by the diff engine.
 - **Strict Pydantic schemas.** The LLM only returns lenient *candidates*. Each candidate is validated item by item into a strict model (`NewsItem`, normalised social URLs, careers URL), so one bad item never fails a whole response. Unsupported values become `null`, not guesses.
 - **Grounded `YYYY-MM-DD` dates.** A news item is kept only if it has a real, non-future `YYYY-MM-DD` publication date, its `date_type` is `published` (modified/updated/*oppdatert* dates are rejected), and its headline and date wording appear verbatim on a scraped page. Page metadata cross-checks the date. Navigation labels such as "See more news" or "Read more" are rejected, so UI text is never reported as news.
+- **Strict content grounding.** A domain is kept only if one of its fetched pages contains the exact Brreg name (case-insensitive) or the 9-digit organisation number (also written as `923 609 016`). When the homepage does not, a bounded same-domain crawl checks the site's about/contact/legal pages (at most 2 link layers and 4 extra fetches per domain) before the domain is rejected. The matching rule itself is never loosened.
+- **Off-site redirects are dropped.** Every fetch, including homepages, records where its redirects end. If the final URL is on a different registrable domain, the page is discarded unparsed and never used for grounding or extraction, so a third-party site can never vouch for the entity.
+
+### Company news and job postings
+
+`CompanyProfile` carries two page-grounded synthesis fields, built by a deterministic crawler (no LLM) from the company's own grounded site:
+
+| Field | Item model | Fields |
+| --- | --- | --- |
+| `company_news` | `CompanyNewsItem` (extends `NewsItem`) | `title`, `url`, `published_date` (`YYYY-MM-DD`), `date_type` (`published`), `date_evidence`, `summary`, `source_url`, `entity_evidence`, `retrieval_date` |
+| `job_postings` | `JobPosting` | `title`, `url`, `source_url`, `entity_evidence`, `date_posted`, `valid_through`, `location`, `retrieval_date` |
+
+- `url` is the item's own page; `source_url` is the company-owned page that links to it; `entity_evidence` quotes the text on the item's own page that names the entity.
+- **Golden rule.** An item is kept only if its own page, fetched on its own URL, contains the exact Brreg name or organisation number - the same check used for website grounding.
+- **Discovery.** The crawler follows news hubs (`/nyheter`, `/news`, `/aktuelt`, `/presse` ...) and careers hubs (`/karriere`, `/careers`, `/ledige-stillinger` ...) linked from the grounded pages, probing the usual paths when none are linked, with one nested listing level (e.g. `/aktuelt/nyheter-og-reportasjer`). It is capped at 17 extra fetches per company, never fetches a URL twice and runs concurrently with the LLM call.
+- **News rules.** Every `NewsItem` rule applies: a real headline (not a UI label), a direct article URL, and a publication date from page metadata or a labelled date in the text (`Publisert 12. mars 2026`) - never a modified/updated date, never in the future. At most 5 items, newest first.
+- **Job rules.** The page must be a posting (schema.org `JobPosting` data or posting cues such as *søknadsfrist* / "apply now"); generic labels such as "Ledige stillinger" are rejected, and postings marked filled or past their `valid_through` deadline are dropped. At most 10 postings.
+- **Domains.** News must sit on a validated own domain. Postings may also be hosted on a known applicant-tracking system (Teamtailor, Webcruiter, Jobbnorge, Recman, HR Manager, ...) when the company's own site links to them; on an ATS board only that company's own board host is followed. Items on a parent's domain or on a domain that failed grounding are dropped, including from cached snapshots.
+- **Across runs.** `company_news` accumulates by URL like `news`; `job_postings` always reflects the latest run, so a closed posting is never carried forward.
 
 ### Cost Efficiency
 
@@ -129,6 +148,8 @@ The offline unit suite needs no network or API key:
 | --- | --- |
 | `tests/test_domain_validator.py` | Registrable-domain parsing, parent-domain rejection (with and without a Brreg parent), subsidiaries registered with a parent's site, Norwegian characters and unrelated domains, sanitising and purging cached parent-sourced facts. |
 | `tests/test_news_extraction.py` | Rejection of UI labels, modified/updated dates, future dates, listing and non-article URLs; grounding of headlines, URLs and date evidence; page-metadata date cross-checks; social profile validation and group-brand rejection; news accumulation across runs. |
+| `tests/test_content_grounding.py` | Exact name / org-number matching, rejection of ungrounded domains, footer text, the about/contact fallback crawl (linked pages, path probes, second layer), unchanged matching strictness and fetch bounds. |
+| `tests/test_site_activity.py` | Off-site redirect dropping (no parse, no retry, no grounding); `company_news` and `job_postings` discovery, the golden rule on each item's own page, publication dates, closed/expired postings, ATS boards, crawl bounds, parent-domain clean-up and diff behaviour. |
 
 `tests/test_careers_and_retry.py` additionally covers the careers/jobs validation, retry classification and backoff behaviour, and the concurrency limit.
 
@@ -136,6 +157,8 @@ The offline unit suite needs no network or API key:
 python tests/test_domain_validator.py
 python tests/test_news_extraction.py
 python tests/test_careers_and_retry.py
+python tests/test_content_grounding.py
+python tests/test_site_activity.py
 ```
 
 ## Submission contract
