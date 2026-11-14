@@ -29,7 +29,7 @@ import instructor
 import trafilatura
 from trafilatura import downloads as trafilatura_downloads
 from dotenv import load_dotenv
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from lxml import html as lxml_html
 from openai import (
     APIConnectionError,
@@ -74,6 +74,13 @@ log = logging.getLogger(__name__)
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 DDG_MAX_RESULTS = 6  # extra headroom: unrelated/parent domains are filtered out
+# ddgs metasearch backends, tried in order. "auto" kept hitting rate-limited
+# engines (duckduckgo/wikipedia) and returned nothing; bing was the most reliable.
+SEARCH_BACKENDS = os.getenv("SEARCH_BACKENDS", "bing, brave, duckduckgo, mojeek, yahoo")
+SEARCH_TIMEOUT = 8          # seconds per backend request
+SEARCH_ATTEMPTS = 2
+SEARCH_CONCURRENCY = 3      # simultaneous searches across the batch (rate-limit friendly)
+_search_semaphores: dict[int, asyncio.Semaphore] = {}  # one per event loop
 
 MAX_NEWS_ITEMS = 10
 MAX_PROMPT_CHARS = 12_000  # text + links for all pages; keeps latency / 503s in check
@@ -333,8 +340,8 @@ async def _retry_async(factory, *, attempts: int, retryable, what: str):
 def _ddg_search_sync(query: str, max_results: int) -> list[dict]:
     """Synchronous DuckDuckGo search — runs in a thread pool."""
     try:
-        with DDGS() as ddgs:
-            return list(ddgs.text(query, max_results=max_results))
+        with DDGS(timeout=SEARCH_TIMEOUT) as ddgs:
+            return list(ddgs.text(query, max_results=max_results, backend=SEARCH_BACKENDS))
     except Exception as e:
         print(f"Search backend failed: {e}")
         return []
@@ -344,16 +351,18 @@ async def _ddg_search(query: str, max_results: int = DDG_MAX_RESULTS) -> list[di
     """Async wrapper: run DDGS.text in the default executor, retrying empty
     (usually rate-limited) results with exponential backoff."""
     loop = asyncio.get_running_loop()
+    sem = _search_semaphores.setdefault(id(loop), asyncio.Semaphore(SEARCH_CONCURRENCY))
 
     async def attempt() -> list[dict]:
-        results = await loop.run_in_executor(None, partial(_ddg_search_sync, query, max_results))
+        async with sem:
+            results = await loop.run_in_executor(None, partial(_ddg_search_sync, query, max_results))
         if not results:
             raise TransientFetchError("empty search result")
         return results
 
     try:
         return await _retry_async(
-            attempt, attempts=SCRAPE_ATTEMPTS,
+            attempt, attempts=SEARCH_ATTEMPTS,
             retryable=lambda e: isinstance(e, TransientFetchError), what=f"search {query[:40]!r}",
         )
     except TransientFetchError:
@@ -685,7 +694,7 @@ def _grounding_text(page: Page) -> str:
 
 
 def _is_grounded(page: Page, validator: DomainValidator) -> bool:
-    return validator.text_names_entity(_grounding_text(page))
+    return validator.page_names_entity(page.url, _grounding_text(page))
 
 
 def verify_pages(pages: list[Page], validator: DomainValidator) -> list[Page]:
@@ -700,8 +709,10 @@ def verify_pages(pages: list[Page], validator: DomainValidator) -> list[Page]:
         fetched = [p for p in group if p.text or p.links]
         if not fetched:
             continue
-        grounded = any(_is_grounded(p, validator) for p in fetched)
-        if not grounded:
+        grounded = next((p for p in fetched if _is_grounded(p, validator)), None)
+        if grounded is not None:
+            validator.verify_content(grounded.url, _grounding_text(grounded))  # records verification
+        else:
             validator.verify_content(fetched[0].url, None)  # records rejection + logs reason
     return [p for p in pages if validator.check(p.url).accepted]
 
@@ -711,7 +722,7 @@ def verify_pages(pages: list[Page], validator: DomainValidator) -> list[Page]:
 # often sits on an "about" or "contact" page (or in a legal/privacy page linked
 # from the footer). Before rejecting the domain we look there - same domain only,
 # at most GROUNDING_MAX_DEPTH link layers and GROUNDING_MAX_FETCHES extra fetches
-# per domain. The match itself is unchanged: validator.text_names_entity.
+# per domain. The match itself is unchanged: validator.page_names_entity.
 
 GROUNDING_MAX_DEPTH = 2
 GROUNDING_MAX_FETCHES = 4
@@ -808,7 +819,7 @@ async def ground_pages(pages: list[Page], validator: DomainValidator, fetch=None
             by_domain.setdefault(dom, []).append(p)
     pending = {
         dom: group for dom, group in by_domain.items()
-        if validator.check(group[0].url).accepted
+        if validator.may_fetch(group[0].url)
         and not any(_is_grounded(p, validator) for p in group)
     }
     if pending:
@@ -1312,12 +1323,12 @@ async def extract_company_profile(
     if validator is None:
         validator = await DomainValidator.for_entity(enhet)
 
-    registered = validator.registered_site_url
+    registered = validator.registered_fetch_url
     candidates = list(dict.fromkeys(([registered] if registered else []) + urls))
     accepted: list[str] = []
     for url in candidates:
         verdict = validator.check(url)
-        if verdict.accepted:
+        if verdict.accepted or validator.needs_grounding(url):
             accepted.append(url)
         else:
             log.info("[%s] Rejected %s: %s", enhet.organisasjonsnummer, url, verdict.reason)

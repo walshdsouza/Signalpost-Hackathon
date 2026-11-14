@@ -35,6 +35,7 @@ from schema import CompanyProfile
 from storage import init_db, get_cached_profile, save_company_snapshot
 from diff_engine import apply_diff_and_reconciliation
 from domain_validator import DomainValidator
+from official_facts import enrich_with_official_facts
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -237,6 +238,11 @@ async def process_company(
             fallback_reason = f"Unexpected error ({type(e).__name__}: {e})."
             log.exception("[%s] %s", orgnr, fallback_reason)
             enhet, profile, validator = None, CompanyProfile(summary_of_changes=fallback_reason), None
+
+        # Official registry facts (CEO, employees, revenue) for the exact entity.
+        # Applied on every path, including LLM fallbacks.
+        if enhet is not None:
+            profile = await enrich_with_official_facts(enhet.organisasjonsnummer, profile)
 
         elapsed = time.perf_counter() - t0
         raw_result = _build_result(orgnr, enhet, profile, fallback_reason, elapsed)

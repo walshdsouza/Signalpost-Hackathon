@@ -91,6 +91,10 @@ def _is_shorter_brand_of(label: str, name: str) -> bool:
 
 CONTENT_MISMATCH_REASON = "Name or org number missing from page content"
 
+# Legal-form suffixes dropped when matching a trading name on the registered site.
+_LEGAL_SUFFIX_RE = re.compile(r"\s+(asa|as|a/s|sa|ans|da|enk|nuf|ba|sf|ks)$")
+_MIN_TRADING_NAME_LEN = 5
+
 
 def _fold_text(text: str) -> str:
     return " ".join(text.casefold().split())
@@ -122,6 +126,8 @@ class DomainValidator:
         self.registered_domain = registrable_domain(enhet.hjemmeside)
         # Domains whose fetched page text named neither the entity nor its org number.
         self.content_rejected: set[str] = set()
+        # Domains whose fetched page text DID name the entity (exact name / org number).
+        self.content_verified: set[str] = set()
 
     @classmethod
     async def for_entity(cls, enhet: Enhet) -> "DomainValidator":
@@ -180,12 +186,32 @@ class DomainValidator:
                 return flat[start:end].strip()
         return self.enhet.navn  # casefold-only match (e.g. 'ß'): name is on the page
 
+    def page_names_entity(self, url: str | None, text: str | None) -> bool:
+        """Site-level grounding: :meth:`text_names_entity`, or - only on the entity's
+        own Brreg-registered domain whose label already IS the entity's name - the
+        name without its legal-form suffix ("102 Asia Mat" for "102 ASIA MAT AS").
+
+        News items and job postings keep the strict :meth:`text_names_entity`."""
+        if self.text_names_entity(text):
+            return True
+        domain = registrable_domain(url)
+        if not text or not domain or domain != self.registered_domain:
+            return False
+        if domain in self.ancestor_domains or not _label_matches_name(domain.split(".")[0], self.enhet.navn):
+            return False
+        trading = _LEGAL_SUFFIX_RE.sub("", _fold_text(self.enhet.navn))
+        if trading == _fold_text(self.enhet.navn) or len(trading) < _MIN_TRADING_NAME_LEN:
+            return False
+        return re.search(r"(?<!\w)" + re.escape(trading) + r"(?!\w)", _fold_text(text)) is not None
+
     def verify_content(self, url: str, text: str | None) -> Verdict:
         """Grounding check on a fetched page. A failing domain is rejected for good
         (``check`` refuses it afterwards) and one reason line is logged."""
-        if self.text_names_entity(text):
-            return Verdict(True, "page content names the entity")
         domain = registrable_domain(url)
+        if self.page_names_entity(url, text):
+            if domain:
+                self.content_verified.add(domain)
+            return Verdict(True, "page content names the entity")
         if domain:
             self.content_rejected.add(domain)
         log.info("[%s] Rejected %s: %s", self.enhet.organisasjonsnummer, url, CONTENT_MISMATCH_REASON)
@@ -206,6 +232,11 @@ class DomainValidator:
 
         if domain == self.registered_domain:
             if _is_shorter_brand_of(label, self.enhet.navn):
+                # e.g. 1818.no for "1818 OPPLYSNINGSTJENESTEN AS" - but also equinor.com
+                # for "EQUINOR ENERGY AS". Only accepted once a fetched page of the
+                # domain names this exact entity (legal name or org number).
+                if domain in self.content_verified:
+                    return Verdict(True, "listed as hjemmeside in Brreg; page names the entity")
                 return Verdict(False, f"registered site {domain} looks like a parent/group brand")
             return Verdict(True, "listed as hjemmeside in Brreg")
 
@@ -238,6 +269,31 @@ class DomainValidator:
             if _label_matches_name(handle, anc.navn):
                 return Verdict(False, f"handle {handle!r} belongs to parent {anc.navn}")
         return Verdict(True, "handle not attributable to a parent")
+
+    def needs_grounding(self, url: str | None) -> bool:
+        """True for the entity's own Brreg-registered site when it is held back only
+        because it looks like a group brand: it may be fetched, and :meth:`check`
+        accepts it once a page of it names the entity (see ``content_verified``)."""
+        domain = registrable_domain(url)
+        return bool(
+            domain
+            and domain == self.registered_domain
+            and domain not in self.ancestor_domains
+            and domain not in self.content_rejected
+            and domain not in self.content_verified
+            and _is_shorter_brand_of(domain.split(".")[0], self.enhet.navn)
+        )
+
+    def may_fetch(self, url: str | None) -> bool:
+        """Accepted, or the registered site awaiting content grounding."""
+        return self.check(url).accepted or self.needs_grounding(url)
+
+    @property
+    def registered_fetch_url(self) -> str | None:
+        """The Brreg ``hjemmeside`` as a URL if it may be fetched (see :meth:`may_fetch`)."""
+        if self.registered_domain and self.may_fetch(self.enhet.hjemmeside):
+            return _with_scheme(self.enhet.hjemmeside)
+        return None
 
     @property
     def registered_site_url(self) -> str | None:

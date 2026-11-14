@@ -174,6 +174,111 @@ def test_no_fallback_for_empty_or_already_rejected_domains():
     assert site.fetched == []
 
 
+# --- Registered site that looks like a group brand (1818.no for 1818 OPPLYSNINGSTJENESTEN AS)
+
+def _brand_validator():
+    return validator("994936093", "1818 OPPLYSNINGSTJENESTEN AS", hjemmeside="www.1818.no")
+
+
+def test_brand_registered_site_held_back_until_grounded():
+    v = _brand_validator()
+    assert not v.check("https://www.1818.no").accepted
+    assert v.registered_site_url is None
+    assert v.needs_grounding("https://www.1818.no")
+    assert v.registered_fetch_url == "https://www.1818.no"
+    assert v.sanitize_profile(CompanyProfile()).website.fact_value is None
+
+
+def test_brand_registered_site_accepted_when_page_names_entity():
+    v = _brand_validator()
+    home = Page("https://www.1818.no/", text="Ring 1818", raw_text="1818 Opplysningstjenesten AS, org.nr 994 936 093")
+    assert _ground([home], v, FakeSite({})) == [home]
+    assert v.check("https://www.1818.no/kontakt").accepted
+    assert v.registered_site_url == "https://www.1818.no"
+    assert v.sanitize_profile(CompanyProfile()).website.fact_value == "https://www.1818.no"
+
+
+def test_brand_registered_site_grounded_via_about_page():
+    v = _brand_validator()
+    home = Page("https://www.1818.no/", text="Ring oss",
+                links=[("Om oss", "https://www.1818.no/om-oss")])
+    about = Page("https://www.1818.no/om-oss", text="1818 Opplysningstjenesten AS er ...")
+    site = FakeSite({"https://www.1818.no/om-oss": about})
+    kept = _ground([home], v, site)
+    assert {p.url for p in kept} == {home.url, about.url}
+    assert v.check("https://www.1818.no").accepted
+
+
+def test_brand_registered_site_rejected_when_page_does_not_name_entity():
+    v = _brand_validator()
+    home = Page("https://www.1818.no/", text="1818 Group - all our companies")
+    assert _ground([home], v, FakeSite({})) == []
+    assert not v.check("https://www.1818.no").accepted
+    assert not v.needs_grounding("https://www.1818.no")
+
+
+def test_brand_registered_site_with_empty_page_not_accepted():
+    v = _brand_validator()
+    assert _ground([Page("https://www.1818.no/")], v, FakeSite({})) == []
+    assert v.registered_site_url is None
+
+
+def test_subsidiary_on_group_site_still_refused_without_its_name():
+    # The original guard: EQUINOR ENERGY AS listing equinor.com is not given equinor.com
+    v = validator("990888213", "EQUINOR ENERGY AS", hjemmeside="www.equinor.com")
+    home = Page("https://www.equinor.com/", text="Equinor ASA - energy company, org 923 609 016")
+    assert _ground([home], v, FakeSite({})) == []
+    assert not v.check("https://www.equinor.com").accepted
+
+
+def test_brand_registered_site_never_accepted_when_it_is_a_parents_domain():
+    from domain_validator import DomainValidator
+    from brreg_client import Enhet, Organisasjonsform
+    form = Organisasjonsform(kode="ASA", beskrivelse="x")
+    parent = Enhet(organisasjonsnummer="923609016", navn="EQUINOR ASA", organisasjonsform=form,
+                   hjemmeside="www.equinor.com")
+    sub = Enhet(organisasjonsnummer="990888213", navn="EQUINOR ENERGY AS", organisasjonsform=form,
+                hjemmeside="www.equinor.com", overordnetEnhet="923609016")
+    v = DomainValidator(sub, [parent])
+    assert not v.needs_grounding("https://www.equinor.com")
+    home = Page("https://www.equinor.com/", text="Equinor Energy AS")
+    assert _ground([home], v, FakeSite({})) == []
+
+
+# --- Trading name (legal suffix dropped) on the entity's own registered, name-matching domain
+
+def _asia():
+    return validator("923177035", "102 ASIA MAT AS", hjemmeside="102asiamat.no")
+
+
+def test_trading_name_grounds_registered_name_domain():
+    v = _asia()
+    home = Page("https://102asiamat.no/", text="Hos 102 Asia Mat finner du et stort utvalg")
+    assert _ground([home], v, FakeSite({})) == [home]
+    assert v.registered_site_url == "https://102asiamat.no"
+
+
+def test_trading_name_not_enough_on_other_domains():
+    v = _asia()
+    other = Page("https://asiamat-oslo.no/", text="Hos 102 Asia Mat finner du")
+    assert not v.page_names_entity(other.url, other.text)
+    # unregistered domain whose label matches the name: still needs the exact legal name
+    v2 = validator("923177035", "102 ASIA MAT AS")
+    assert not v2.page_names_entity("https://102asiamat.no/", "Hos 102 Asia Mat")
+
+
+def test_trading_name_must_be_whole_words_and_long_enough():
+    v = _asia()
+    assert not v.page_names_entity("https://102asiamat.no/", "1102 Asia Matbutikk")
+    short = validator("1", "ABC AS", hjemmeside="abc.no")
+    assert not short.page_names_entity("https://abc.no/", "Welcome to ABC")
+
+
+def test_trading_name_not_used_for_news_and_jobs():
+    v = _asia()
+    assert not v.text_names_entity("Hos 102 Asia Mat finner du")  # strict per-item rule unchanged
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:
