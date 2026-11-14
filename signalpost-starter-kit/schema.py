@@ -86,6 +86,14 @@ _NON_ARTICLE_SEGMENTS = {
     "shop", "store", "careers", "karriere", "jobs", "about", "about-us", "om-oss",
     "contact", "kontakt", "login", "search",
 }
+# Slug words of utility pages that are never an article (subscription forms, feeds...).
+_UTILITY_SLUG_WORDS = {
+    "subscribe", "subscription", "unsubscribe", "abonner", "abonnement", "newsletter",
+    "nyhetsbrev", "contact", "kontakt", "sitemap", "search", "sok", "login", "rss", "feed",
+    "cookie", "cookies", "personvern", "privacy",
+}
+# Query parameters that turn a URL into a filtered / paginated listing.
+_LISTING_QUERY_KEYS = {"page", "paged", "side", "filter", "category", "kategori", "tag", "offset", "sort"}
 
 # What the date evidence must NOT say: modified / updated / revised timestamps.
 _NOT_PUBLISHED_RE = re.compile(
@@ -125,6 +133,16 @@ def article_url_problem(url: str) -> str | None:
         return f"url {url!r} is a {segments[0]!r} page, not news"
     if segments[-1].rsplit(".", 1)[0] in _LISTING_SEGMENTS:
         return f"url {url!r} is a news listing page, not an article"
+    # Pagination: /nyheter/page/2/, /news/side/3
+    for prev, seg in zip(segments, segments[1:]):
+        if prev in ("page", "side") and seg.isdigit():
+            return f"url {url!r} is a paginated listing, not an article"
+    query_keys = {k.split("=", 1)[0].lower() for k in parsed.query.split("&") if k}
+    if query_keys & _LISTING_QUERY_KEYS:
+        return f"url {url!r} is a filtered/paginated listing, not an article"
+    slug_words = set(re.split(r"[-_.]+", segments[-1]))
+    if slug_words & _UTILITY_SLUG_WORDS:
+        return f"url {url!r} is a utility page, not an article"
     return None
 
 

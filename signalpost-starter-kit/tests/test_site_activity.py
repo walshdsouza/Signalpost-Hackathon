@@ -72,7 +72,8 @@ JOB = Page(f"{SITE}/karriere/prosjektleder-tromso", text="Søknadsfrist: snarest
            headline="Prosjektleder Tromsø",
            json_ld=[{"@type": "JobPosting", "title": "Prosjektleder", "datePosted": "2026-10-01",
                      "validThrough": f"{FUTURE}T23:59", "jobLocation": {"address": {"addressLocality": "Tromsø"}}}])
-ATS_JOB = Page("https://nordlysbygg.teamtailor.com/jobs/123-tomrer", text="Apply now for Tømrer",
+ATS_JOB = Page("https://nordlysbygg.teamtailor.com/jobs/123-tomrer",
+               text=f"Apply now for Tømrer. Søknadsfrist: {FUTURE}",
                raw_text="Tømrer - Nordlys Bygg AS", headline="Tømrer")
 
 
@@ -200,6 +201,34 @@ def test_news_never_follows_other_domains():
 
 # --- job postings -------------------------------------------------------------------
 
+def test_role_description_and_programme_pages_are_not_postings():
+    # Real cases: tomra.com/careers/internship-at-tomra, postenbring.no/jobb/terminalarbeider
+    role = Page(f"{SITE}/karriere/terminalarbeider", headline="Terminalarbeider", raw_text=FOOTER,
+                text="Terminalarbeider i Nordlys Bygg AS. Både heltids- og deltidsstillinger.")
+    programme = Page(f"{SITE}/karriere/internship", headline="Internship Opportunities", raw_text=FOOTER,
+                     text="Our internship program. Apply now! Full-time.")
+    hub = Page(JOB_HUB.url, text="Ledige stillinger", links=[
+        ("Terminalarbeider", role.url), ("Internship Opportunities", programme.url)])
+    _, jobs = crawl([HOME], validator(), FakeSite(hub, role, programme))
+    assert jobs == []
+
+
+def test_posting_with_deadline_but_no_jsonld_is_kept():
+    job = Page(f"{SITE}/karriere/snekker-1234", headline="Snekker", raw_text=FOOTER,
+               text=f"Snekker i Nordlys Bygg AS. Heltid. Søknadsfrist: {FUTURE}")
+    hub = Page(JOB_HUB.url, text="Ledige stillinger", links=[("Snekker", job.url)])
+    _, jobs = crawl([HOME], validator(), FakeSite(hub, job))
+    assert [j.url for j in jobs] == [job.url] and jobs[0].valid_through == FUTURE
+
+
+def test_posting_with_expired_deadline_is_dropped():
+    job = Page(f"{SITE}/karriere/snekker-1234", headline="Snekker", raw_text=FOOTER,
+               text=f"Snekker i Nordlys Bygg AS. Heltid. Søknadsfrist: {PAST}")
+    hub = Page(JOB_HUB.url, text="Ledige stillinger", links=[("Snekker", job.url)])
+    _, jobs = crawl([HOME], validator(), FakeSite(hub, job))
+    assert jobs == []
+
+
 def test_jobs_from_own_site_and_linked_ats():
     _, jobs = crawl([HOME], validator(), FakeSite(NEWS_HUB, ARTICLE, JOB_HUB, JOB, ATS_JOB))
     by_url = {j.url: j for j in jobs}
@@ -236,7 +265,7 @@ def test_ats_board_only_follows_its_own_host():
     board = Page("https://nordlysbygg.teamtailor.com/jobs", text="Jobs", links=[
         ("Elektriker", "https://nordlysbygg.teamtailor.com/jobs/7-elektriker"),
         ("Other company job", "https://othercorp.teamtailor.com/jobs/9-sjafor")])
-    posting = Page("https://nordlysbygg.teamtailor.com/jobs/7-elektriker", text="Apply now",
+    posting = Page("https://nordlysbygg.teamtailor.com/jobs/7-elektriker", text=f"Apply now. Søknadsfrist: {FUTURE}",
                    raw_text="Elektriker hos Nordlys Bygg AS", headline="Elektriker")
     site = FakeSite(board, posting)
     _, jobs = crawl([home], validator(), site)

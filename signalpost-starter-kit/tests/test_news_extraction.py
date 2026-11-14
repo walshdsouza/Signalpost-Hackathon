@@ -253,6 +253,58 @@ def test_diff_accumulates_news_and_preserves_socials():
     assert "Discovered 1 new news item" in summary
 
 
+
+def test_listing_pagination_and_utility_urls_are_not_articles():
+    from schema import article_url_problem
+    # Real cases: akerbp.com archive pages, yara.com subscription page
+    for bad in ("https://akerbp.com/nyheter/page/2/?filter=news",
+                "https://akerbp.com/nyheter/page/22/",
+                "https://example.no/nyheter?page=3",
+                "https://example.no/news/?category=press",
+                "https://www.yara.com/news-and-media/subscription/",
+                "https://example.no/aktuelt/nyhetsbrev",
+                "https://example.no/news/newsletter-signup"):
+        assert article_url_problem(bad), bad
+    for good in ("https://www.equinor.com/news/20261009-equinor-and-shell-partner-on-bay-du-nord",
+                 "https://akerbp.com/nyheter/aker-bp-gjor-funn-i-nordsjoen/",
+                 "https://mowi.com/news/record-high-volumes-for-mowi-in-q3/"):
+        assert article_url_problem(good) is None, good
+
+
+def _verify(news, pages, fetched_pages):
+    import asyncio
+    from extractor import verify_news_entity
+    calls = []
+
+    async def fetch(url):
+        calls.append(url)
+        return fetched_pages.get(url, Page(url))
+
+    return asyncio.run(verify_news_entity(news, pages, VALIDATOR, fetch=fetch)), calls
+
+
+def test_llm_news_kept_only_if_article_page_names_entity():
+    from schema import NewsItem
+    good = NewsItem(**GOOD, retrieval_date="2026-11-15")
+    other = NewsItem(**{**GOOD, "url": "https://www.akersolutions.com/news/partner-story-2026"},
+                     retrieval_date="2026-11-15")
+    pages = {
+        good.url: Page(good.url, text="Contract news", raw_text="© Aker Solutions ASA"),
+        other.url: Page(other.url, text="Story by Aker Solutions Subsea AS"),  # different entity
+    }
+    kept, _ = _verify([good, other], [], pages)
+    assert [n.url for n in kept] == [good.url]
+
+
+def test_llm_news_unreachable_article_dropped_and_scraped_page_reused():
+    from schema import NewsItem
+    item = NewsItem(**GOOD, retrieval_date="2026-11-15")
+    kept, calls = _verify([item], [], {})
+    assert kept == []
+    scraped = Page(item.url, text="x", raw_text="Org.nr 913 748 100")
+    kept, calls = _verify([item], [scraped], {})
+    assert kept == [item] and calls == []
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:

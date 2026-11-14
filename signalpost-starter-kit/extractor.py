@@ -1081,13 +1081,19 @@ def _job_posting(page: Page, lead: _Lead, evidence: str, navn: str, today: str) 
     """Build a posting from its own fetched page (raises ValidationError/ValueError)."""
     text = f"{page.raw_text} {page.text}"
     ld = next((o for o in page.json_ld if "jobposting" in _ld_type(o)), None)
-    if ld is None and not _JOB_CUE_RE.search(text):
-        raise ValueError("page does not look like a job posting")
+    deadline = _labelled_date(_DEADLINE_TEXT_RE, text)
+    # A specific open vacancy carries JobPosting data, or an application deadline
+    # alongside posting cues. Role descriptions, internship/graduate programme and
+    # "life at X" pages have neither and are not claimed as open postings.
+    if ld is None and not (deadline and _JOB_CUE_RE.search(text)):
+        raise ValueError("page does not look like a job posting (no JobPosting data or application deadline)")
     if _JOB_CLOSED_RE.search(text):
         raise ValueError("posting is closed")
     valid_through = _ld_date(ld.get("validThrough")) if ld else None
-    if not valid_through and (found := _labelled_date(_DEADLINE_TEXT_RE, text)):
-        valid_through = found[0]
+    if not valid_through and deadline:
+        valid_through = deadline[0]
+    if valid_through and valid_through < today:
+        raise ValueError(f"posting expired ({valid_through})")
     title = " ".join(str((ld or {}).get("title") or page.headline or lead.anchor).split())
     if _fold(title) == _fold(navn):
         title = lead.anchor  # the page heading is just the company name
@@ -1408,9 +1414,42 @@ async def extract_company_profile(
     #    from a parent domain or an unverified site
     # ------------------------------------------------------------------
     profile = _build_profile(extraction, enhet, pages, validator)
+    try:
+        verified_news = await verify_news_entity(profile.news, pages, validator)
+    except Exception as e:  # noqa: BLE001 - never ship unverified news
+        log.warning("[%s] News entity check failed (%s); dropping LLM news", enhet.organisasjonsnummer, e)
+        verified_news = []
     company_news, job_postings = await activity_task
-    profile = profile.model_copy(update={"company_news": company_news, "job_postings": job_postings})
+    profile = profile.model_copy(update={
+        "news": verified_news, "company_news": company_news, "job_postings": job_postings})
     return validator.sanitize_profile(profile)
+
+
+async def verify_news_entity(
+    news: list[NewsItem], pages: list[Page], validator: DomainValidator, fetch=None,
+) -> list[NewsItem]:
+    """GOLDEN RULE for LLM news, as for ``company_news``: each article's OWN page
+    must name the entity (exact Brreg name or org number). Pages already scraped
+    are reused; the rest are fetched once. Unreachable pages are dropped."""
+    if not news:
+        return []
+    fetch = fetch or _fetch_page_once
+    oid = validator.enhet.organisasjonsnummer
+    have = {_canon(p.url): p for p in pages if p.text or p.links}
+
+    async def own_page(url: str) -> Page:
+        return have.get(_canon(url)) or await fetch(url)
+
+    article_pages = await asyncio.gather(*[own_page(n.url) for n in news])
+    kept = []
+    for item, page in zip(news, article_pages):
+        if not (page.text or page.links):
+            log.info("[%s] Rejected news %s: article page could not be fetched", oid, item.url)
+        elif not validator.text_names_entity(_grounding_text(page)):
+            log.info("[%s] Rejected news %s: %s on the article page", oid, item.url, CONTENT_MISMATCH_REASON)
+        else:
+            kept.append(item)
+    return kept
 
 
 async def _safe_crawl_site_activity(pages: list[Page], validator: DomainValidator):
