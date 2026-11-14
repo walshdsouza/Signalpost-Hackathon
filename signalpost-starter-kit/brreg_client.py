@@ -61,6 +61,19 @@ async def lookup_enhet(orgnr: str) -> Enhet | None:
         return Enhet.model_validate(response.json())
 
 
+async def search_enheter(navn: str, size: int = 20) -> list[Enhet]:
+    """Search Enhetsregisteret by company name (best matches first)."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            BASE_URL,
+            params={"navn": navn, "size": size},
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        hits = response.json().get("_embedded", {}).get("enheter", [])
+        return [Enhet.model_validate(h) for h in hits]
+
+
 # ---------------------------------------------------------------------------
 # Quick smoke-test (run with:  python brreg_client.py)
 # ---------------------------------------------------------------------------

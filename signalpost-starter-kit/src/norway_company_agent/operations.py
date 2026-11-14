@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import resource
 import sys
 from collections import Counter
 from typing import Iterable
@@ -38,6 +37,10 @@ def domain_request_summary(counts: Counter[str]) -> dict[str, float | int | None
 
 
 def peak_rss_bytes() -> int:
+    try:
+        import resource  # Unix-only
+    except ImportError:  # Windows: no getrusage
+        return 0
     value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     # macOS reports bytes; Linux and most BSD-derived CI images report KiB.
     return int(value if sys.platform == "darwin" else value * 1024)

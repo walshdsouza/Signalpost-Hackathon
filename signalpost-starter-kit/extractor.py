@@ -1412,23 +1412,82 @@ async def _safe_crawl_site_activity(pages: list[Page], validator: DomainValidato
 
 
 # ---------------------------------------------------------------------------
-# Quick smoke-test  (run with:  python extractor.py)
+# CLI  (run with:  python extractor.py <domain | orgnr> [--orgnr N] [--name NAME])
 # ---------------------------------------------------------------------------
 
+async def resolve_enhet(
+    target: str, orgnr: str | None = None, name: str | None = None
+) -> Enhet | None:
+    """Resolve a CLI target (org number or domain) to a Brreg Enhet.
+
+    * ``target`` is a 9-digit org number → direct Brreg lookup.
+    * ``target`` is a domain → ``--orgnr`` if given, else a Brreg name search
+      (``--name``, or the domain's leading label, e.g. ``telenor.com`` →
+      ``telenor``) preferring a hit whose registered hjemmeside is that domain.
+      If the resolved entity has no hjemmeside in Brreg, the given domain is
+      used as its website so the domain validator trusts it.
+    """
+    from brreg_client import lookup_enhet, search_enheter
+    from domain_validator import registrable_domain
+
+    digits = re.sub(r"\s", "", target)
+    if re.fullmatch(r"\d{9}", digits):
+        return await lookup_enhet(digits)
+
+    domain = registrable_domain(target if "://" in target else f"https://{target}")
+    if not domain:
+        raise ValueError(f"Not an org number or domain: {target!r}")
+
+    if orgnr:
+        enhet = await lookup_enhet(re.sub(r"\s", "", orgnr))
+    else:
+        label = domain.split(".")[0]
+        query = name or label
+        wanted = {_fold(query), _fold(label)}
+
+        def score(h: Enhet) -> int:
+            reg = registrable_domain(h.hjemmeside)
+            s = 0
+            if reg == domain:
+                s += 100
+            elif reg and reg.split(".")[0] == label:  # telenor.com ↔ telenor.no
+                s += 50
+            bare = re.sub(r"\s+(asa|as|a/s|sa|ab)$", "", _fold(h.navn))
+            if bare in wanted:
+                s += 30
+            if h.organisasjonsform.kode in {"ASA", "AS"}:
+                s += 5
+            return s
+
+        hits = sorted(await search_enheter(query), key=score, reverse=True)
+        # Require a website or exact-name match; never guess from a loose hit.
+        enhet = hits[0] if hits and score(hits[0]) >= 30 else None
+    if enhet is not None and not enhet.hjemmeside:
+        enhet = enhet.model_copy(update={"hjemmeside": domain})
+    return enhet
+
+
 if __name__ == "__main__":
-    from brreg_client import lookup_enhet
+    import argparse
+    import sys
 
-    async def _demo() -> None:
-        # Equinor ASA — org number 923609016
-        enhet = await lookup_enhet("923609016")
+    parser = argparse.ArgumentParser(description="Extract a company profile.")
+    parser.add_argument("target", help="Company domain (e.g. telenor.com) or 9-digit org number")
+    parser.add_argument("--orgnr", help="Org number to use when target is a domain")
+    parser.add_argument("--name", help="Company name to search Brreg with when target is a domain")
+    args = parser.parse_args()
+
+    async def _run() -> int:
+        enhet = await resolve_enhet(args.target, args.orgnr, args.name)
         if enhet is None:
-            print("Could not find organisation in Brreg.")
-            return
+            print(f"Could not find organisation in Brreg for {args.target!r}.", file=sys.stderr)
+            return 1
 
-        print(f"Extracting profile for: {enhet.navn} ({enhet.organisasjonsnummer})")
-        print("Searching, scraping, and calling Gemini — this may take ~15 s ...\n")
+        print(f"Extracting profile for: {enhet.navn} ({enhet.organisasjonsnummer})", file=sys.stderr)
+        print(f"Registered website: {enhet.hjemmeside or '-'}\n", file=sys.stderr)
 
         profile = await extract_company_profile(enhet)
         print(json.dumps(profile.model_dump(), indent=2, ensure_ascii=False))
+        return 0
 
-    asyncio.run(_demo())
+    sys.exit(asyncio.run(_run()))
