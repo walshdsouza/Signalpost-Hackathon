@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 from datetime import datetime
@@ -23,7 +24,7 @@ from pathlib import Path
 from brreg_client import Enhet, lookup_enhet
 from entity_matcher import is_same_company
 from extractor import (
-    extract_company_profile,
+    extract_company_profile_with_status,
     get_company_usage,
     GEMINI_MODEL,
     get_total_usage,
@@ -56,15 +57,56 @@ DEFAULT_OUTPUT_FILE = "output_profiles.json"
 RUN_REPORT_KEY = "_run_report"
 
 
-def load_target_organisations(path: str | Path) -> list[str]:
-    """Read organisation numbers from *path*, one per line.
+_ORGNR_KEYS = ("orgnr", "organisasjonsnummer", "organisation_number", "organization_number",
+               "org_number", "orgNr", "orgNumber", "org", "id")
+_ORGNR_RE = re.compile(r"(?<!\d)(\d{3})[\s.]?(\d{3})[\s.]?(\d{3})(?!\d)")
 
-    Tolerates stray quotes/commas (e.g. a JSON-style list) and skips blank
-    lines. Duplicates are dropped while preserving order.
+
+def _orgnrs_from_json(value) -> list[str]:
+    if isinstance(value, dict):
+        for key in _ORGNR_KEYS:
+            if key in value:
+                return _orgnrs_from_json(value[key])
+        return []
+    if isinstance(value, list):
+        return [o for item in value for o in _orgnrs_from_json(item)]
+    if isinstance(value, (str, int)):
+        return ["".join(m.groups()) for m in _ORGNR_RE.finditer(str(value))]
+    return []
+
+
+def load_target_organisations(path: str | Path) -> list[str]:
+    """Read organisation numbers from *path*.
+
+    Accepts plain text (one per line), JSONL (``{"orgnr": "923609016"}`` and
+    similar keys), a JSON array, CSV-ish lines and spaced numbers
+    (``923 609 016``). Every result is a 9-digit org number; blank lines and
+    anything without one are skipped. Duplicates are dropped, order preserved.
     """
-    with open(path, "r", encoding="utf-8") as f:
-        orgs = [line.strip(' \t\r\n",\'[]') for line in f]
-    return list(dict.fromkeys(o for o in orgs if o))
+    with open(path, "r", encoding="utf-8-sig") as f:
+        text = f.read()
+    orgs: list[str] = []
+    stripped = text.strip()
+    if stripped.startswith("["):  # whole file is one JSON array
+        try:
+            orgs = _orgnrs_from_json(json.loads(stripped))
+        except json.JSONDecodeError:
+            orgs = []
+    if not orgs:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line[0] in "[{":
+                try:
+                    orgs.extend(_orgnrs_from_json(json.loads(line.rstrip(","))))
+                    continue
+                except json.JSONDecodeError:
+                    pass
+            match = _ORGNR_RE.search(line)
+            if match:
+                orgs.append("".join(match.groups()))
+    return list(dict.fromkeys(orgs))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -194,19 +236,15 @@ async def _enrich(
     # Trusted registry hierarchy: which domains belong to parent groups?
     validator = await DomainValidator.for_entity(enhet)
 
-    # 2. Short-circuit before any search/scrape if the LLM cannot run
-    unavailable = llm_unavailable_reason()
-    if unavailable:
-        reason = f"LLM extraction skipped: {unavailable}."
-        log.warning("[%s] %s Returning Brreg baseline.", orgnr, reason)
-        return enhet, validator.sanitize_profile(CompanyProfile(summary_of_changes=reason)), reason, validator
-
-    # 3. Web + LLM extraction (only validated domains are scraped)
-    log.info("[%s] Extracting intelligence profile (web search + LLM) ...", orgnr)
+    # 2. Web extraction (only validated domains are scraped). Website grounding and
+    #    the news/jobs crawl run even when the LLM is unavailable or fails; the
+    #    record is then marked fallback with that reason.
+    log.info("[%s] Extracting intelligence profile (web search + site crawl + LLM) ...", orgnr)
     try:
-        return enhet, await extract_company_profile(enhet, validator), None, validator
+        profile, llm_issue = await extract_company_profile_with_status(enhet, validator)
+        return enhet, profile, (f"{llm_issue}." if llm_issue else None), validator
     except Exception as e:
-        reason = f"LLM extraction failed ({type(e).__name__}: {e})."
+        reason = f"Web extraction failed ({type(e).__name__}: {e})."
         log.error("[%s] %s Returning Brreg baseline.", orgnr, reason)
         return enhet, validator.sanitize_profile(CompanyProfile(summary_of_changes=reason)), reason, validator
 

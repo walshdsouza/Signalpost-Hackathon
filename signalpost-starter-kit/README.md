@@ -144,8 +144,10 @@ Every run also writes a self-contained HTML report next to the JSON (`--output o
 ### Fault Tolerance
 
 - **Bounded concurrency.** Companies are processed concurrently behind an `asyncio.Semaphore` limited to **5**, which keeps large batches inside Brreg, search and Gemini rate limits.
-- **Exponential backoff.** A custom async retry loop with jitter (delay doubling per attempt, capped at 30 s) wraps the Gemini call (5 attempts; HTTP 429, 5xx, timeouts and connection errors, including errors wrapped by `instructor`), page fetches and web search (3 attempts). Authentication errors and other 4xx responses are not retried.
-- **Graceful degradation.** Every input always yields a result record. A failed lookup or extraction falls back to the Brreg baseline and is flagged `status: "fallback"` with a reason.
+- **Exponential backoff.** A custom async retry loop with jitter (delay doubling per attempt, capped at 30 s) wraps the Gemini call (5 attempts; HTTP 429, 5xx, timeouts and connection errors, including errors wrapped by `instructor`) and page fetches (3 attempts). Web search uses the `ddgs` metasearch library with an ordered backend list (Bing first; override with `SEARCH_BACKENDS`), at most 3 concurrent searches and 2 attempts. Authentication errors and other 4xx responses are not retried.
+- **The LLM is optional.** Brreg facts, website grounding and the deterministic news/jobs crawl run without it. With no `GEMINI_API_KEY`, a rejected key, or a failed Gemini call, every strictly verified registry and site result is still returned; only the LLM extras (social profiles, careers link, LLM news) are missing, and the record is flagged `status: "fallback"` with the reason.
+- **Graceful degradation.** Every input always yields a result record. A failed registry lookup or web extraction falls back to the Brreg baseline and is flagged `status: "fallback"` with a reason.
+- **Flexible input.** `python main.py <batch>` accepts plain text (one org number per line), JSONL (`{"orgnr": "923609016"}`; also `organisasjonsnummer` / `organisation_number`), a JSON array or CSV lines, and spaced numbers (`923 609 016`). Anything that is not a 9-digit org number is skipped; duplicates are dropped.
 
 ### Testing Rigor
 

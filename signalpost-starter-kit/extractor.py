@@ -1298,7 +1298,21 @@ async def extract_company_profile(
     enhet: Enhet,
     validator: DomainValidator | None = None,
 ) -> CompanyProfile:
+    """:func:`extract_company_profile_with_status` without the LLM status."""
+    profile, _ = await extract_company_profile_with_status(enhet, validator)
+    return profile
+
+
+async def extract_company_profile_with_status(
+    enhet: Enhet,
+    validator: DomainValidator | None = None,
+) -> tuple[CompanyProfile, str | None]:
     """Build a CompanyProfile for a Norwegian company using web search + LLM.
+
+    The LLM only adds extras (socials, careers, LLM news, web facts). Website
+    grounding and the deterministic news/jobs crawl run without it, so a missing,
+    rejected or failing key still yields every strictly verified web result.
+    Returns ``(profile, llm_issue)``; *llm_issue* is ``None`` when the LLM ran.
 
     Args:
         enhet: A validated :class:`~brreg_client.Enhet` from the Brreg API.
@@ -1310,15 +1324,9 @@ async def extract_company_profile(
         Fields the LLM cannot verify from scraped text will have ``fact_value=None``;
         ``news`` and ``socials`` contain only items that passed strict validation.
 
-    Raises:
-        EnvironmentError: If the LLM is unavailable (no key, or key rejected
-            earlier in this run). Checked before any search or scraping.
-        openai.APIError: On LLM API failures.
+    LLM failures are not raised: they are reported as *llm_issue*.
     """
-    reason = llm_unavailable_reason()
-    if reason:
-        raise EnvironmentError(f"{reason}. Add a valid key to your .env file.")
-    api_key = _get_api_key()
+    llm_issue = llm_unavailable_reason()
 
     # ------------------------------------------------------------------
     # 1. Search DuckDuckGo for the company's website + recent news
@@ -1356,7 +1364,7 @@ async def extract_company_profile(
                 "(candidate domains matched a parent group or another entity); "
                 "web-derived fields left empty."
             )
-        ))
+        )), llm_issue
     urls = accepted
     accepted_set = set(accepted)
     search_results = [r for r in search_results if r.get("href") in accepted_set]
@@ -1369,7 +1377,7 @@ async def extract_company_profile(
     if not any(p.text or p.links for p in pages):
         return validator.sanitize_profile(CompanyProfile(
             summary_of_changes=f"No readable content could be retrieved from the verified sites of {enhet.navn}."
-        ))
+        )), llm_issue
 
     # 2b. Content verification: a domain stays only if one of its pages names the
     # entity (exact Brreg name or org number). If the fetched pages do not, the
@@ -1377,47 +1385,50 @@ async def extract_company_profile(
     # is rejected, the website becomes null and the Brreg baseline takes over.
     pages = await ground_pages(pages, validator)
     if not any(p.text or p.links for p in pages):
-        return validator.sanitize_profile(CompanyProfile(summary_of_changes=CONTENT_MISMATCH_REASON))
+        return validator.sanitize_profile(CompanyProfile(summary_of_changes=CONTENT_MISMATCH_REASON)), llm_issue
 
     # ------------------------------------------------------------------
-    # 3. Build prompt and call Gemini via instructor
+    # 3. Synthesis crawl (news + jobs, no LLM) runs while the LLM call is in flight
     # ------------------------------------------------------------------
-    openai_client = AsyncOpenAI(
-        api_key=api_key,
-        base_url=GEMINI_BASE_URL,
-        timeout=60.0,
-        max_retries=0,  # retries are handled by _retry_async (exponential backoff)
-    )
-    client = instructor.from_openai(openai_client)
-
-    raw_user_message = _build_user_message(enhet, search_results, pages, validator.ancestors)
-    truncated_message = raw_user_message[:MAX_PROMPT_CHARS]
-
-    # Synthesis crawl (news + jobs) runs while the LLM call is in flight.
     activity_task = asyncio.create_task(_safe_crawl_site_activity(pages, validator))
 
-    global _llm_disabled_reason
-    try:
-        extraction, completion = await _retry_async(
-            lambda: client.chat.completions.create_with_completion(
-                model=GEMINI_MODEL,
-                response_model=CompanyExtraction,
-                max_retries=2,  # instructor: re-asks on schema-validation failures only
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": truncated_message},
-                ],
-            ),
-            attempts=LLM_ATTEMPTS,
-            retryable=_is_retryable_llm_error,
-            what=f"[{enhet.organisasjonsnummer}] Gemini call",
+    extraction = CompanyExtraction()
+    if llm_issue is None:
+        openai_client = AsyncOpenAI(
+            api_key=_get_api_key(),
+            base_url=GEMINI_BASE_URL,
+            timeout=60.0,
+            max_retries=0,  # retries are handled by _retry_async (exponential backoff)
         )
-        record_usage(enhet.organisasjonsnummer, completion)
-    except Exception as e:
-        activity_task.cancel()
-        if _is_auth_error(e):
-            _llm_disabled_reason = "GEMINI_API_KEY was rejected by the API"
-        raise
+        client = instructor.from_openai(openai_client)
+        raw_user_message = _build_user_message(enhet, search_results, pages, validator.ancestors)
+        truncated_message = raw_user_message[:MAX_PROMPT_CHARS]
+
+        global _llm_disabled_reason
+        try:
+            extraction, completion = await _retry_async(
+                lambda: client.chat.completions.create_with_completion(
+                    model=GEMINI_MODEL,
+                    response_model=CompanyExtraction,
+                    max_retries=2,  # instructor: re-asks on schema-validation failures only
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": truncated_message},
+                    ],
+                ),
+                attempts=LLM_ATTEMPTS,
+                retryable=_is_retryable_llm_error,
+                what=f"[{enhet.organisasjonsnummer}] Gemini call",
+            )
+            record_usage(enhet.organisasjonsnummer, completion)
+        except Exception as e:  # noqa: BLE001 - keep the deterministic results
+            if _is_auth_error(e):
+                _llm_disabled_reason = "GEMINI_API_KEY was rejected by the API"
+            llm_issue = f"LLM extraction failed ({type(e).__name__}: {str(e)[:200]})"
+            log.warning("[%s] %s; keeping registry + site-crawl results", enhet.organisasjonsnummer, llm_issue)
+    if llm_issue is not None:
+        extraction = CompanyExtraction(
+            summary_of_changes=f"{llm_issue}. Registry facts and the verified site crawl only.")
 
     # ------------------------------------------------------------------
     # 4. Strict validation of news/socials, then drop anything attributed
@@ -1432,7 +1443,7 @@ async def extract_company_profile(
     company_news, job_postings = await activity_task
     profile = profile.model_copy(update={
         "news": verified_news, "company_news": company_news, "job_postings": job_postings})
-    return validator.sanitize_profile(profile)
+    return validator.sanitize_profile(profile), llm_issue
 
 
 async def verify_news_entity(
