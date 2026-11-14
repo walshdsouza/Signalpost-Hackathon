@@ -1,2 +1,0 @@
-"""Norway company enrichment POC."""
-

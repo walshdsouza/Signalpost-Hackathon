@@ -91,6 +91,31 @@ def _is_shorter_brand_of(label: str, name: str) -> bool:
 
 CONTENT_MISMATCH_REASON = "Name or org number missing from page content"
 
+
+def _compact(text: str) -> str:
+    """Lowercase alphanumerics only (spaces, dots, dashes, underscores removed)."""
+    return re.sub(r"[^0-9a-z]", "", text.lower())
+
+
+_NORDIC_SPELLINGS = {"ø": ("o", "oe"), "æ": ("ae",), "å": ("a", "aa")}
+
+
+def _name_handles(name: str) -> set[str]:
+    """Every exact handle spelling of *name*: each Nordic letter in either common
+    spelling (mixed too: "brodreneaase"), with and without its legal-form suffix
+    ("telenor", "telenorasa"). Bounded: only the name's own letters expand."""
+    spellings = {name.lower()}
+    for letter, options in _NORDIC_SPELLINGS.items():
+        for _ in range(min(name.lower().count(letter), 4)):
+            spellings = {s.replace(letter, o, 1) for s in spellings for o in options}
+    out: set[str] = set()
+    for spelled in spellings:
+        spelled = unicodedata.normalize("NFKD", spelled).encode("ascii", "ignore").decode()
+        out.add(_compact(normalise_name(spelled)))
+        out.add(_compact(spelled))
+    out.discard("")
+    return out
+
 # Legal-form suffixes dropped when matching a trading name on the registered site.
 _LEGAL_SUFFIX_RE = re.compile(r"\s+(asa|as|a/s|sa|ans|da|enk|nuf|ba|sf|ks)$")
 _MIN_TRADING_NAME_LEN = 5
@@ -243,12 +268,14 @@ class DomainValidator:
         return Verdict(False, f"{domain} does not match entity name")
 
     def check_social(self, url: str | None) -> Verdict:
-        """Reject social profiles that belong to a parent/group rather than the entity.
+        """Strict: accept a social profile only if its handle IS the entity's legal name.
 
-        The handle is compared with the entity's name the same way domains are:
-        an exact name match is accepted; a handle that is only the first part of
-        the name (``equinor`` for "Equinor Energy AS") or matches an ancestor's
-        name is refused.
+        The handle and the Brreg name are compared after removing case, spaces and
+        punctuation, folding Norwegian letters (both ``å``->``a`` and ``å``->``aa``
+        spellings), with the legal-form suffix optional. No fuzzy matching: a handle
+        with anything extra or missing - ``telenornorge`` for "TELENOR ASA" (that is
+        Telenor Norge AS), ``equinor`` for "EQUINOR ENERGY AS" - is refused, as is a
+        handle matching a known parent's name. Recall is traded for precision.
         """
         try:
             path = urlparse(url if "//" in (url or "") else "//" + (url or "")).path
@@ -259,16 +286,16 @@ class DomainValidator:
             segments.pop(0)
         if not segments:
             return Verdict(False, "no profile handle")
-        handle = segments[0].lstrip("@").lower()
+        handle = _compact(segments[0].lstrip("@"))
+        if not handle:
+            return Verdict(False, "no profile handle")
 
-        if _label_matches_name(handle, self.enhet.navn):
-            return Verdict(True, "handle matches entity name")
-        if _is_shorter_brand_of(handle, self.enhet.navn):
-            return Verdict(False, f"handle {handle!r} looks like a parent/group brand")
         for anc in self.ancestors:
-            if _label_matches_name(handle, anc.navn):
+            if handle in _name_handles(anc.navn):
                 return Verdict(False, f"handle {handle!r} belongs to parent {anc.navn}")
-        return Verdict(True, "handle not attributable to a parent")
+        if handle in _name_handles(self.enhet.navn):
+            return Verdict(True, "handle is the entity's exact name")
+        return Verdict(False, f"handle {handle!r} is not the exact entity name")
 
     def needs_grounding(self, url: str | None) -> bool:
         """True for the entity's own Brreg-registered site when it is held back only
