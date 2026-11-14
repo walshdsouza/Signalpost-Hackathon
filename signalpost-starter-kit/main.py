@@ -111,11 +111,12 @@ def load_target_organisations(path: str | Path) -> list[str]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Enrich Norwegian companies from a file of organisation numbers.",
+        description="Enrich Norwegian companies from a batch of organisation numbers. "
+                    "Writes the JSON results and an HTML report next to them (same name, .html).",
     )
     parser.add_argument(
         "input_file",
-        help="Path to a text file with one organisation number per line.",
+        help="Batch file: one org number per line, JSONL ({\"orgnr\": ...}), a JSON array or CSV.",
     )
     parser.add_argument(
         "--output",

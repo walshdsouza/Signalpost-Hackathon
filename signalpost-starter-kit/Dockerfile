@@ -23,6 +23,10 @@ RUN pip install --no-cache-dir .
 # Copy remaining project source files
 COPY . .
 
-# Usage: docker run -v <dir>:/data <image> /data/input_orgs.txt --output /data/out.json
+# Usage (the batch may be .txt, .jsonl, .json or .csv; out.html is written next to out.json):
+#   docker build -t signalpost .
+#   docker run --rm -e GEMINI_API_KEY=<key> -v <dir>:/data signalpost /data/input_orgs.jsonl --output /data/out.json
+# Without GEMINI_API_KEY the run still returns Brreg facts, verified websites and the
+# news/jobs crawl (records flagged "fallback"). With no arguments it prints usage.
 ENTRYPOINT ["python", "main.py"]
-CMD ["batch_1000.txt"]
+CMD ["--help"]

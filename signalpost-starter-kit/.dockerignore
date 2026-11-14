@@ -1,0 +1,26 @@
+# Secrets: the API key is passed at run time (-e GEMINI_API_KEY=...), never baked in
+.env
+.env.*
+
+# Local state: a stale snapshot cache would be merged into fresh results
+*.db
+signalpost.db
+
+# Environments, caches and build artifacts
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+build/
+*.egg-info/
+**/*.egg-info/
+
+# Local run outputs and macOS metadata
+out/
+output_profiles.json
+output_profiles.html
+._*
+**/._*
+.git/
