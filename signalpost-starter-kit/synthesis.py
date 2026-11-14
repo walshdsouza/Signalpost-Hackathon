@@ -195,51 +195,107 @@ def _what_changed(intel, entity, roles, accounts, urls, today, current_name: str
     return out
 
 
-def _unknown(brreg, intel, ctx, llm_ran: bool) -> list[dict]:
-    out = []
+# Fields reported in ``availability``, in display order.
+AVAILABILITY_FIELDS = ("website", "ceo_name", "employee_count", "latest_revenue_nok",
+                       "news", "job_postings", "careers", "socials")
+NO_SITE = "Not checked: no verified company website."
+
+
+def _assess(brreg, intel, ctx, record) -> dict[str, dict]:
+    """``{field: {"state", "reason"}}`` for every field that has no value.
+
+    States follow the output contract: ``not_available`` (looked, nothing there),
+    ``not_applicable`` (the question does not apply to this organisation form),
+    ``failed`` (the lookup or extraction step broke). ``blocked`` / ``ambiguous``
+    are never guessed.
+    """
+    out: dict[str, dict] = {}
     ok = (ctx or {}).get("ok") or {}
-    accounts = (ctx or {}).get("accounts")
+    roles, accounts = (ctx or {}).get("roles"), (ctx or {}).get("accounts")
     form = ((brreg.get("organisasjonsform") or {}).get("kode") or "").upper()
     has_site = bool(_value(intel.get("website") or {}))
+    reason_text = record.get("fallback_reason") or ""
+    web_failed = reason_text.startswith("Web extraction failed")
+    llm_issue = record.get("status") == "fallback" and not web_failed and bool(reason_text)
 
-    def add(field, reason):
-        out.append({"field": field, "reason": reason})
+    def add(field, state, reason):
+        out[field] = {"state": state, "reason": reason}
 
     if not has_site:
-        add("website", "No website is registered in Brreg and no site was found that shows the company's "
-                       "legal name or org number.")
+        if web_failed:
+            add("website", "failed", reason_text)
+        else:
+            add("website", "not_available", "No website is registered in Brreg and no site was found that "
+                                            "shows the company's legal name or org number.")
+
     if not _value(intel.get("ceo_name") or {}):
-        add("ceo_name", "Brreg roles could not be retrieved." if ok.get("roles") is False
-            else "No active daglig leder (CEO) is registered in Brreg.")
+        holders = [r for g in (roles or {}).get("rollegrupper") or [] for r in g.get("roller") or []
+                   if (r.get("type") or {}).get("kode") == "INNH"]
+        if ok.get("roles") is False:
+            add("ceo_name", "failed", "Brreg roles could not be retrieved.")
+        elif form == "ENK" and holders:
+            add("ceo_name", "not_applicable", "Sole proprietorship run by its registered owner (innehaver); "
+                                              "no daglig leder role.")
+        else:
+            add("ceo_name", "not_available", "No active daglig leder (CEO) is registered in Brreg.")
+
     if _value(intel.get("employee_count") or {}) is None:
-        add("employee_count", "Brreg could not be retrieved." if ok.get("entity") is False
-            else "No employee count is registered in Brreg.")
+        if ok.get("entity") is False:
+            add("employee_count", "failed", "Brreg could not be retrieved.")
+        else:
+            add("employee_count", "not_available", "No employee count is registered in Brreg.")
+
     if _value(intel.get("latest_revenue_nok") or {}) is None:
         own = _own_accounts(accounts)
         if ok.get("accounts") is False:
-            reason = "The accounts register (Regnskapsregisteret) could not be retrieved."
+            add("latest_revenue_nok", "failed", "The accounts register (Regnskapsregisteret) could not be retrieved.")
         elif isinstance(accounts, dict) and accounts.get("_unsupported"):
-            reason = "Brreg's accounts API does not publish this account type (e.g. banks and insurers)."
+            add("latest_revenue_nok", "not_available",
+                "Brreg's accounts API does not publish this account type (e.g. banks and insurers).")
         elif own and not any(item.get("valuta") == "NOK" for _, item in own):
-            reason = f"Accounts are reported in {own[-1][1].get('valuta')}, not NOK."
+            add("latest_revenue_nok", "not_available", f"Accounts are reported in {own[-1][1].get('valuta')}, not NOK.")
         elif own:
-            reason = "The filed accounts report no operating revenue."
+            add("latest_revenue_nok", "not_available", "The filed accounts report no operating revenue.")
         elif form in ALWAYS_FILE_ACCOUNTS:
-            reason = "No annual accounts are available in Regnskapsregisteret."
+            add("latest_revenue_nok", "not_available", "No annual accounts are available in Regnskapsregisteret.")
         else:
-            reason = (f"No annual accounts are filed; this organisation form ({form or 'unknown'}) "
-                      "only has to file above certain thresholds.")
-        add("latest_revenue_nok", reason)
-    if has_site:
-        if not intel.get("company_news") and not intel.get("news"):
-            add("news", "No dated news article that names the company was found on its verified website.")
-        if not intel.get("job_postings"):
-            add("job_postings", "No open job posting that names the company was found.")
-    socials = intel.get("socials") or {}
-    if not any(_value(v) for v in socials.values()):
-        add("socials", "No social profile whose handle is the company's exact legal name was found."
-            if llm_ran and has_site else "Social profiles were not checked (no verified website or no LLM).")
+            add("latest_revenue_nok", "not_applicable",
+                f"No annual accounts are filed; this organisation form ({form or 'unknown'}) "
+                "only has to file above certain thresholds.")
+
+    if not intel.get("company_news") and not intel.get("news"):
+        add("news", "not_available", "No dated news article that names the company was found on its verified "
+                                     "website." if has_site else NO_SITE)
+    if not intel.get("job_postings"):
+        add("job_postings", "not_available", "No open job posting that names the company was found."
+            if has_site else NO_SITE)
+
+    # Careers link and social profiles come from the LLM step.
+    for field, found in (("careers", _value(intel.get("careers") or {})),
+                         ("socials", any(_value(v) for v in (intel.get("socials") or {}).values()))):
+        if found:
+            continue
+        if not has_site:
+            add(field, "not_available", NO_SITE)
+        elif llm_issue:
+            add(field, "failed", f"Not checked: {reason_text.rstrip('.')}.")
+        elif field == "socials":
+            add(field, "not_available", "No social profile whose handle is the company's exact legal name was found.")
+        else:
+            add(field, "not_available", "No careers page on the company's verified site was found.")
     return out
+
+
+def _availability(assessed: dict[str, dict]) -> dict[str, dict]:
+    return {f: assessed.get(f) or {"state": "available"} for f in AVAILABILITY_FIELDS}
+
+
+def _unknown(assessed: dict[str, dict]) -> list[dict]:
+    """Missing fields worth stating; items that were merely not checked for lack of a
+    website are covered by the website entry and not repeated."""
+    return [{"field": f, **assessed[f]} for f in AVAILABILITY_FIELDS
+            if f in assessed and not (f != "website" and assessed[f]["reason"] == NO_SITE)
+            and f != "careers"]
 
 
 # ---------------------------------------------------------------------------
@@ -257,17 +313,20 @@ def build_synthesis(record: dict, context: dict | None, today: str | None = None
         "entity": ENTITY_URL.format(org=orgnr), "roles": ROLES_URL.format(org=orgnr),
         "accounts": ACCOUNTS_URL.format(org=orgnr),
     }
-    llm_ran = record.get("status") == "complete"
 
     if not brreg.get("navn"):
-        unknown = [{"field": "all", "reason": record.get("fallback_reason") or "Organisation not found in Brreg."}]
+        reason = record.get("fallback_reason") or "Organisation not found in Brreg."
+        state = "not_available" if "404" in reason or "not found" in reason.lower() else "failed"
+        unknown = [{"field": "all", "state": state, "reason": reason}]
         return {"what_it_does": [], "what_changed": [], "unknown": unknown, "sources": [],
-                "summary": f"No registry record could be retrieved for {orgnr}. {unknown[0]['reason']}"}
+                "availability": {f: {"state": state, "reason": reason} for f in AVAILABILITY_FIELDS},
+                "summary": f"No registry record could be retrieved for {orgnr}. {reason}"}
 
     does = _what_it_does(orgnr, brreg, intel, ctx.get("entity"), urls, today)
     changed = _what_changed(intel, ctx.get("entity"), ctx.get("roles"), ctx.get("accounts"), urls, today,
                             brreg.get("navn") or "")
-    unknown = _unknown(brreg, intel, ctx, llm_ran)
+    assessed = _assess(brreg, intel, ctx, record)
+    unknown = _unknown(assessed)
     sources = list(dict.fromkeys(s["source_url"] for s in does + changed if s.get("source_url")))
 
     summary = " ".join(s["text"] for s in does[:2])
@@ -280,6 +339,7 @@ def build_synthesis(record: dict, context: dict | None, today: str | None = None
                   "latest_revenue_nok": "revenue", "news": "news", "job_postings": "open jobs", "socials": "social profiles"}
         summary += " Unknown: " + ", ".join(labels.get(u["field"], u["field"]) for u in unknown) + "."
     return {"what_it_does": does, "what_changed": changed, "unknown": unknown,
+            "availability": _availability(assessed),
             "sources": sources, "summary": re.sub(r"\s+", " ", summary).strip()}
 
 
@@ -289,6 +349,7 @@ def attach_synthesis(record: dict, context: dict | None) -> dict:
         syn = build_synthesis(record, context)
         intel = dict(record.get("intelligence_profile") or {})
         intel["synthesis"] = syn
+        intel["availability"] = syn.get("availability", {})
         intel["summary_of_changes"] = syn["summary"]
         return {**record, "intelligence_profile": intel}
     except Exception as e:  # noqa: BLE001

@@ -162,9 +162,11 @@ def test_socials_unknown_reason_depends_on_what_was_checked():
     site = fact("https://102asiamat.no", "https://102asiamat.no/")
     llm = {u["field"]: u["reason"] for u in build_synthesis(record(website=site), context({}, {}, None))["unknown"]}
     assert "exact legal name" in llm["socials"]
-    no_llm = {u["field"]: u["reason"] for u in
-              build_synthesis(record(status="fallback", website=site), context({}, {}, None))["unknown"]}
-    assert "were not checked" in no_llm["socials"]
+    rec = record(status="fallback", website=site)
+    rec["fallback_reason"] = "GEMINI_API_KEY is not set."
+    no_llm = {u["field"]: u for u in build_synthesis(rec, context({}, {}, None))["unknown"]}
+    assert no_llm["socials"]["state"] == "failed"
+    assert no_llm["socials"]["reason"] == "Not checked: GEMINI_API_KEY is not set."
 
 
 def test_unchanged_name_history_and_zero_revenue_are_not_changes():
@@ -176,3 +178,51 @@ def test_unchanged_name_history_and_zero_revenue_are_not_changes():
     assert "Revenue" not in ch
     up = texts(build_synthesis(record(), context({}, {}, [acct("2023-12-31", 0.0), acct("2024-12-31", 5000.0)]))["what_changed"])
     assert "Revenue went from NOK 0 (FY2023) to NOK 5 000 (FY2024)." in up
+
+
+STATES = {"available", "not_available", "blocked", "not_applicable", "ambiguous", "failed"}
+
+
+def test_availability_covers_every_field_with_contract_states():
+    rec, ctx = full()
+    out = attach_synthesis(rec, ctx)
+    av = out["intelligence_profile"]["availability"]
+    assert list(av) == ["website", "ceo_name", "employee_count", "latest_revenue_nok",
+                        "news", "job_postings", "careers", "socials"]
+    assert all(v["state"] in STATES for v in av.values())
+    assert av["website"] == {"state": "available"} and av["socials"] == {"state": "available"}
+    assert av["careers"]["state"] == "not_available"  # site checked, no careers link
+    assert out["intelligence_profile"]["synthesis"]["availability"] == av
+
+
+def test_not_applicable_vs_not_available_vs_failed():
+    fli = build_synthesis(record(form="FLI"), context({}, {"rollegrupper": []}, None))["availability"]
+    assert fli["latest_revenue_nok"]["state"] == "not_applicable"
+    assert fli["ceo_name"]["state"] == "not_available"
+    assert fli["news"] == {"state": "not_available", "reason": "Not checked: no verified company website."}
+    as_ = build_synthesis(record(form="AS"), context({}, {}, None))["availability"]
+    assert as_["latest_revenue_nok"]["state"] == "not_available"  # AS must file: absence is a finding
+    failed = build_synthesis(record(), context(None, None, None, ok={"entity": False, "roles": False, "accounts": False}))
+    av = failed["availability"]
+    assert av["ceo_name"]["state"] == av["employee_count"]["state"] == av["latest_revenue_nok"]["state"] == "failed"
+
+
+def test_sole_proprietor_owner_means_ceo_not_applicable():
+    roles = {"rollegrupper": [{"type": {"kode": "INNH"}, "roller": [{"type": {"kode": "INNH"}}]}]}
+    av = build_synthesis(record(form="ENK"), context({}, roles, None))["availability"]
+    assert av["ceo_name"]["state"] == "not_applicable" and "innehaver" in av["ceo_name"]["reason"]
+
+
+def test_web_extraction_failure_marks_website_failed():
+    rec = record(status="fallback")
+    rec["fallback_reason"] = "Web extraction failed (TimeoutError: x)."
+    av = build_synthesis(rec, context({}, {}, None))["availability"]
+    assert av["website"]["state"] == "failed" and av["website"]["reason"].startswith("Web extraction failed")
+
+
+def test_missing_registry_record_states():
+    nf = {"orgnr": "1", "status": "fallback", "fallback_reason": "Organisation not found in Brreg (404).",
+          "brreg_metadata": {"navn": None}, "intelligence_profile": {}}
+    assert {v["state"] for v in build_synthesis(nf, None)["availability"].values()} == {"not_available"}
+    nf["fallback_reason"] = "Brreg lookup failed (ConnectError: x)."
+    assert {v["state"] for v in build_synthesis(nf, None)["availability"].values()} == {"failed"}

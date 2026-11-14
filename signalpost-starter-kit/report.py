@@ -169,7 +169,9 @@ def _synthesis(syn) -> str:
             blocks.append(f'<div class="syn"><h5>{title}</h5><ul>{"".join(rows)}</ul></div>')
     unknown = [u for u in syn.get("unknown") or [] if isinstance(u, dict)]
     if unknown:
-        rows = "".join(f'<li>{esc(u.get("reason"))}</li>' for u in unknown)
+        rows = "".join(
+            (f'<li><span class="state">{esc(str(u["state"]).replace("_", " "))}</span> ' if u.get("state") else "<li>")
+            + f'{esc(u.get("reason"))}</li>' for u in unknown)
         blocks.append(f'<div class="syn unk"><h5>Still unknown</h5><ul>{rows}</ul></div>')
     if not blocks:
         return ""
@@ -360,6 +362,7 @@ section h4 {{ font-size:13px; margin:14px 0 6px; color:var(--muted); text-transf
 .syn ul {{ margin:0; padding-left:18px; font-size:13.5px; }}
 .syn li {{ margin:3px 0; overflow-wrap:anywhere; }}
 .unk li {{ color:var(--muted); }}
+.state {{ display:inline-block; font-size:11px; padding:0 6px; border-radius:99px; background:var(--chip); color:var(--text); margin-right:4px; }}
 .summary {{ color:var(--muted); font-size:13px; margin:12px 0 0; }}
 .muted {{ color:var(--muted); }}
 .empty {{ font-size:13px; margin:6px 0; }}

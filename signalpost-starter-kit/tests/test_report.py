@@ -157,11 +157,12 @@ def test_llm_summary_not_shown():
 def test_synthesis_rendered_with_sources_and_escaped():
     syn = {"what_it_does": [{"text": "X is registered as AS <b>", "source_url": "https://data.brreg.no/e/1"}],
            "what_changed": [{"text": "Revenue rose 5%", "source_url": "javascript:alert(1)"}],
-           "unknown": [{"field": "website", "reason": "No website is registered"}]}
+           "unknown": [{"field": "website", "state": "not_applicable", "reason": "No website is registered"}]}
     out = report.render_report({"1": record(synthesis=syn)})
     c = parse(out)
     assert "What it does" in out and "What changed" in out and "Still unknown" in out
     assert "X is registered as AS &lt;b&gt;" in out and "No website is registered" in out
+    assert '<span class="state">not applicable</span>' in out
     assert "https://data.brreg.no/e/1" in c.hrefs
     assert not any(h and not h.startswith("http") for h in c.hrefs)
     parse(report.render_report({"1": record(synthesis="garbage")}))  # tolerated

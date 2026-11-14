@@ -140,6 +140,8 @@ Every profile carries `intelligence_profile.synthesis`, built deterministically 
 
 `summary_of_changes` is regenerated from these statements, so the free-text summary never contains an unsourced claim.
 
+**Availability states.** `intelligence_profile.availability` gives every field (`website`, `ceo_name`, `employee_count`, `latest_revenue_nok`, `news`, `job_postings`, `careers`, `socials`) one of the contract states with a reason: `available`; `not_available` (the source was checked and has nothing - e.g. no employee count registered); `not_applicable` (does not apply - e.g. revenue for an association below the filing threshold, CEO for a sole proprietorship run by its owner); `failed` (the lookup or LLM step could not run). A field that could not be checked for lack of a verified website says so explicitly. `blocked` and `ambiguous` are never guessed.
+
 ```json
 "what_changed": [
   {"text": "Previously named STATOIL ASA (until 2018-05-16).",
