@@ -9,3 +9,6 @@ ROADMAP.md
 # Python build artifacts
 build/
 *.egg-info/
+
+# Committed smoke-test results (submission contract)
+!signalpost-starter-kit/reports/*.json
