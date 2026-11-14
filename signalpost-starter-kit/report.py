@@ -198,6 +198,68 @@ def _address(b: dict) -> str:
     return ", ".join(x for x in (street, town) if x)
 
 
+MAX_COMPARE = 4
+
+
+def _state_text(availability: dict, field: str) -> str:
+    st = (availability or {}).get(field) or {}
+    state = str(st.get("state") or "not_available").replace("_", " ")
+    return f"\u2014 {state}" + (f": {st['reason']}" if st.get("reason") else "")
+
+
+def _compare_entry(orgnr: str, rec: dict) -> dict:
+    """Rows for the compare table: [label, text, http(s) source or None]. Text only; the
+    page inserts it with textContent, so nothing here can become markup."""
+    b = rec.get("brreg_metadata") or {}
+    p = rec.get("intelligence_profile") or {}
+    av = p.get("availability") if isinstance(p.get("availability"), dict) else {}
+    rows = []
+
+    def row(label, text, url=None):
+        rows.append([label, str(text), safe_url(url)])
+
+    form = b.get("organisasjonsform") or {}
+    row("Organisation form", " ".join(x for x in (form.get("beskrivelse"), f"({form['kode']})" if form.get("kode") else "") if x) or "\u2014",
+        f"https://data.brreg.no/enhetsregisteret/api/enheter/{orgnr}")
+    row("Industry", (b.get("naeringskode1") or {}).get("beskrivelse") or "\u2014")
+    row("Location", _address(b) or "\u2014")
+    for key, label in FACT_LABELS:
+        f = p.get(key) or {}
+        if has_value(f):
+            v = f.get("fact_value")
+            text = (f"NOK {v:,}".replace(",", " ") if key == "latest_revenue_nok" and isinstance(v, int)
+                    else f"{v:,}".replace(",", " ") if key == "employee_count" and isinstance(v, int) else v)
+            src = "Brreg" if is_official(f.get("source_url")) else "Web"
+            row(label, f"{text} [{src}]", f.get("source_url"))
+        else:
+            row(label, _state_text(av, key))
+    socials = [(SOCIAL_LABELS.get(k, k), v.get("fact_value")) for k, v in (p.get("socials") or {}).items() if has_value(v)]
+    row("Social profiles", ", ".join(s for s, _ in socials) if socials else _state_text(av, "socials"),
+        socials[0][1] if socials else None)
+    news = sorted((p.get("company_news") or []) + [n for n in (p.get("news") or [])
+                  if n.get("url") not in {c.get("url") for c in p.get("company_news") or []}],
+                  key=lambda n: n.get("published_date") or "", reverse=True)
+    if news:
+        row("News", f"{len(news)} item{'s' if len(news) != 1 else ''}; latest {news[0].get('published_date')}: "
+                    f"{news[0].get('title')}", news[0].get("url"))
+    else:
+        row("News", _state_text(av, "news"))
+    jobs = p.get("job_postings") or []
+    row("Open positions", f"{len(jobs)}: " + ", ".join(j.get("title") or "" for j in jobs[:3]) if jobs
+        else _state_text(av, "job_postings"), jobs[0].get("url") if jobs else None)
+    syn = p.get("synthesis") if isinstance(p.get("synthesis"), dict) else {}
+    changed = [s for s in syn.get("what_changed") or [] if isinstance(s, dict)]
+    row("Latest change", changed[0].get("text") if changed else "\u2014 none recorded",
+        changed[0].get("source_url") if changed else None)
+    return {"orgnr": orgnr, "name": b.get("navn") or orgnr, "rows": rows}
+
+
+def _json_for_script(value) -> str:
+    """JSON safe inside <script type="application/json">: no '<', '>' or '&' survive."""
+    return (json.dumps(value, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
 def _company_card(orgnr: str, rec: dict) -> tuple[str, dict]:
     b = rec.get("brreg_metadata") or {}
     p = rec.get("intelligence_profile") or {}
@@ -246,7 +308,10 @@ def _company_card(orgnr: str, rec: dict) -> tuple[str, dict]:
       <h3>{esc(name)}</h3>
       <p class="sub">Org.nr {esc(orgnr)} · {brreg_link}{(' · ' + subtitle) if subtitle else ''}</p>
     </div>
-    <span class="score" title="Verified signals for this company">{signals}</span>
+    <div class="side">
+      <span class="score" title="Verified signals for this company">{signals}</span>
+      <label class="cmp"><input type="checkbox" class="cmpbox" value="{esc(orgnr)}"> Compare</label>
+    </div>
   </header>
   {status}
   <dl class="facts">{fact_html}</dl>
@@ -262,6 +327,12 @@ def render_report(data: dict, generated: str | None = None) -> str:
     run = data.get("_run_report") or {}
     companies = {k: v for k, v in data.items() if not k.startswith("_") and isinstance(v, dict)}
     rendered = [_company_card(k, v) for k, v in companies.items()]
+    compare_data = {}
+    for k, v in companies.items():
+        try:
+            compare_data[k] = _compare_entry(k, v)
+        except Exception:  # noqa: BLE001 - a malformed record must not break the page
+            compare_data[k] = {"orgnr": k, "name": (v.get("brreg_metadata") or {}).get("navn") or k, "rows": []}
     cards = [c for c, _ in rendered]
     stats = [s for _, s in rendered]
     total = len(companies)
@@ -369,6 +440,30 @@ section h4 {{ font-size:13px; margin:14px 0 6px; color:var(--muted); text-transf
 .warn {{ background:var(--warn-bg); color:var(--warn); padding:6px 10px; border-radius:8px; font-size:13px; }}
 .src {{ font-size:12px; }}
 .none {{ text-align:center; color:var(--muted); padding:40px 0; display:none; }}
+.side {{ display:flex; flex-direction:column; align-items:flex-end; gap:6px; flex:none; }}
+.cmp {{ font-size:12px; color:var(--muted); white-space:nowrap; cursor:pointer; }}
+.cmpbar {{ position:fixed; left:50%; transform:translateX(-50%); bottom:16px; z-index:20; display:flex; gap:10px;
+  align-items:center; background:var(--panel); border:1px solid var(--line); border-radius:99px; padding:8px 10px 8px 16px;
+  box-shadow:0 6px 24px rgba(0,0,0,.18); max-width:calc(100% - 32px); flex-wrap:wrap; font-size:14px; }}
+.cmpbar[hidden], .cmppanel[hidden] {{ display:none; }}
+button {{ font:inherit; font-size:14px; border-radius:99px; padding:7px 14px; border:1px solid var(--accent);
+  background:var(--accent); color:#fff; cursor:pointer; }}
+button:disabled {{ opacity:.45; cursor:not-allowed; }}
+button.ghost {{ background:transparent; color:var(--accent); }}
+.cmppanel {{ position:fixed; inset:0; z-index:30; background:rgba(0,0,0,.45); display:flex; align-items:flex-start;
+  justify-content:center; padding:24px 16px; overflow:auto; }}
+.cmpinner {{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; width:100%;
+  max-width:1180px; }}
+.cmphead {{ display:flex; justify-content:space-between; align-items:center; gap:12px; }}
+.cmphead h2 {{ font-size:18px; margin:0; }}
+.cmpnote {{ font-size:13px; margin:6px 0 12px; }}
+.cmpscroll {{ overflow-x:auto; }}
+#cmptable {{ border-collapse:collapse; width:100%; min-width:520px; font-size:14px; }}
+#cmptable th, #cmptable td {{ text-align:left; vertical-align:top; padding:8px 10px; border-top:1px solid var(--line);
+  overflow-wrap:anywhere; }}
+#cmptable thead th {{ border-top:0; font-size:14px; }}
+#cmptable tbody th {{ color:var(--muted); font-weight:500; font-size:13px; width:130px; position:sticky; left:0;
+  background:var(--panel); }}
 @media (max-width:720px) {{
   .overview {{ grid-template-columns:1fr; }}
   .grid {{ grid-template-columns:1fr; }}
@@ -405,6 +500,20 @@ section h4 {{ font-size:13px; margin:14px 0 6px; color:var(--muted); text-transf
   <div class="grid" id="grid">{"".join(cards)}</div>
   <p class="none" id="none">No companies match.</p>
 </div>
+<div class="cmpbar" id="cmpbar" hidden>
+  <span id="cmpcount" aria-live="polite"></span>
+  <button type="button" id="cmpgo">Compare</button>
+  <button type="button" id="cmpclear" class="ghost">Clear</button>
+</div>
+<div class="cmppanel" id="cmppanel" hidden role="dialog" aria-modal="true" aria-labelledby="cmptitle">
+  <div class="cmpinner">
+    <div class="cmphead"><h2 id="cmptitle">Compare companies</h2>
+      <button type="button" id="cmpclose" class="ghost">Close</button></div>
+    <p class="muted cmpnote">Each value links to its source. Brreg = official registry, Web = the company's own verified site. Link to this comparison: copy the page address.</p>
+    <div class="cmpscroll"><table id="cmptable"></table></div>
+  </div>
+</div>
+<script type="application/json" id="cmpdata">{_json_for_script(compare_data)}</script>
 <script>
 (function () {{
   var grid = document.getElementById('grid'), q = document.getElementById('q'),
@@ -428,6 +537,72 @@ section h4 {{ font-size:13px; margin:14px 0 6px; color:var(--muted); text-transf
   }}
   q.addEventListener('input', apply); sort.addEventListener('change', apply); web.addEventListener('change', apply);
   apply();
+
+  // ---- compare (text-only DOM; links must be http(s)) ----
+  var MAX = {MAX_COMPARE};
+  var data = JSON.parse(document.getElementById('cmpdata').textContent);
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.cmpbox'));
+  var bar = document.getElementById('cmpbar'), count = document.getElementById('cmpcount'),
+      panel = document.getElementById('cmppanel'), table = document.getElementById('cmptable');
+  var picked = [];
+  function sync() {{
+    boxes.forEach(function (b) {{ b.checked = picked.indexOf(b.value) !== -1; }});
+    bar.hidden = picked.length === 0;
+    count.textContent = picked.length + ' selected' + (picked.length >= MAX ? ' (max ' + MAX + ')' : '') +
+      (picked.length < 2 ? ' \u2014 pick at least 2' : '');
+    document.getElementById('cmpgo').disabled = picked.length < 2;
+  }}
+  function cell(tag, text, url) {{
+    var el = document.createElement(tag);
+    if (url && url.slice(0, 7).toLowerCase() === 'http://' || url && url.slice(0, 8).toLowerCase() === 'https://') {{
+      var a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = text;
+      el.appendChild(a);
+    }} else {{ el.textContent = text; }}
+    return el;
+  }}
+  function render() {{
+    while (table.firstChild) table.removeChild(table.firstChild);
+    var cols = picked.map(function (o) {{ return data[o]; }}).filter(Boolean);
+    var head = document.createElement('tr');
+    head.appendChild(cell('th', ''));
+    cols.forEach(function (c) {{ head.appendChild(cell('th', c.name + ' (' + c.orgnr + ')')); }});
+    var thead = document.createElement('thead'); thead.appendChild(head); table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    (cols[0] ? cols[0].rows : []).forEach(function (r, i) {{
+      var tr = document.createElement('tr');
+      tr.appendChild(cell('th', r[0]));
+      cols.forEach(function (c) {{ var v = c.rows[i] || ['', '', null]; tr.appendChild(cell('td', v[1], v[2])); }});
+      tbody.appendChild(tr);
+    }});
+    table.appendChild(tbody);
+  }}
+  function open() {{
+    if (picked.length < 2) return;
+    render(); panel.hidden = false;
+    if (history.replaceState) history.replaceState(null, '', '#compare=' + picked.join(','));
+    document.getElementById('cmpclose').focus();
+  }}
+  function close() {{
+    panel.hidden = true;
+    if (history.replaceState) history.replaceState(null, '', location.pathname + location.search);
+  }}
+  boxes.forEach(function (b) {{
+    b.addEventListener('change', function () {{
+      var i = picked.indexOf(b.value);
+      if (b.checked && i === -1) {{ if (picked.length < MAX) picked.push(b.value); }}
+      else if (!b.checked && i !== -1) picked.splice(i, 1);
+      sync();
+    }});
+  }});
+  document.getElementById('cmpgo').addEventListener('click', open);
+  document.getElementById('cmpclear').addEventListener('click', function () {{ picked = []; sync(); close(); }});
+  document.getElementById('cmpclose').addEventListener('click', close);
+  document.addEventListener('keydown', function (e) {{ if (e.key === 'Escape' && !panel.hidden) close(); }});
+  var m = /#compare=([0-9,]+)/.exec(location.hash);
+  if (m) {{ picked = m[1].split(',').filter(function (o) {{ return data[o]; }}).slice(0, MAX); }}
+  sync();
+  if (picked.length >= 2) open();
 }})();
 </script>
 </body>

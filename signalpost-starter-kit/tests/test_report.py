@@ -78,7 +78,7 @@ def test_full_record_renders_with_badges_and_values():
     assert out.count('class="badge official"') == 3 + 1  # three Brreg facts + legend
     assert "Telenor Q3" in out and "names “Telenor ASA”" in out and "apply by 2026-12-01" in out
     assert "https://virksomhet.brreg.no/nb/oppslag/enheter/982463718" in c.hrefs
-    assert c.scripts == 1
+    assert c.scripts == 2  # compare data (JSON) + the page script
 
 
 def test_scraped_text_is_escaped_and_unsafe_links_not_rendered():
@@ -94,7 +94,12 @@ def test_scraped_text_is_escaped_and_unsafe_links_not_rendered():
     assert "<script>alert(1)" not in out and "onerror=alert(2)>" not in out
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in out
     assert not any(h and not h.startswith(("http://", "https://")) for h in c.hrefs)
-    assert c.scripts == 1  # only the report's own script
+    assert c.scripts == 2  # compare data (JSON) + the page script; nothing injected
+    blob = out.split('<script type="application/json" id="cmpdata">', 1)[1].split("</script>", 1)[0]
+    assert "<" not in blob and ">" not in blob and "&" not in blob
+    rows = json.loads(blob)["982463718"]["rows"]
+    assert any(r[1].startswith('<script>alert(1)') for r in rows)  # kept as plain text for textContent
+    assert all(r[2] is None or r[2].startswith(("http://", "https://")) for r in rows)
 
 
 def test_news_deduplicated_and_sorted_newest_first():
@@ -166,3 +171,34 @@ def test_synthesis_rendered_with_sources_and_escaped():
     assert "https://data.brreg.no/e/1" in c.hrefs
     assert not any(h and not h.startswith("http") for h in c.hrefs)
     parse(report.render_report({"1": record(synthesis="garbage")}))  # tolerated
+
+
+def _cmp(out):
+    blob = out.split('<script type="application/json" id="cmpdata">', 1)[1].split("</script>", 1)[0]
+    return json.loads(blob)
+
+
+def test_compare_rows_values_states_and_sources():
+    rec = record(
+        ceo_name=fact("Benedicte Schilbred Fasmer", "https://data.brreg.no/enhetsregisteret/api/enheter/982463718/roller"),
+        employee_count=fact(369, "https://data.brreg.no/enhetsregisteret/api/enheter/982463718"),
+        website=fact("https://www.telenor.no/", "https://www.telenor.no/"),
+        availability={"latest_revenue_nok": {"state": "not_applicable", "reason": "Not required to file."}},
+        synthesis={"what_changed": [{"text": "Previously named X ASA.", "source_url": "https://data.brreg.no/x"}]},
+    )
+    out = report.render_report({"982463718": rec, "2": record()})
+    rows = {r[0]: r for r in _cmp(out)["982463718"]["rows"]}
+    assert rows["CEO (daglig leder)"][1] == "Benedicte Schilbred Fasmer [Brreg]"
+    assert rows["Employees"][1] == "369 [Brreg]" and rows["Website"][1] == "https://www.telenor.no/ [Web]"
+    assert rows["Revenue"][1] == "— not applicable: Not required to file." and rows["Revenue"][2] is None
+    assert rows["Latest change"] == ["Latest change", "Previously named X ASA.", "https://data.brreg.no/x"]
+    assert out.count('class="cmpbox"') == 2 and 'id="cmppanel"' in out
+    names = [r[0] for r in _cmp(out)["2"]["rows"]]
+    assert names == [r[0] for r in _cmp(out)["982463718"]["rows"]]  # same rows for every company
+
+
+def test_compare_survives_malformed_records():
+    bad = record(synthesis="garbage", availability=["x"])
+    out = report.render_report({"1": bad})
+    parse(out)
+    assert _cmp(out)["1"]["rows"]

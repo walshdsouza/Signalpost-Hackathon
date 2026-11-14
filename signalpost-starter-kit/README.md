@@ -152,7 +152,7 @@ Every profile carries `intelligence_profile.synthesis`, built deterministically 
 
 ### HTML report
 
-Every run also writes a self-contained HTML report next to the JSON (`--output out.json` -> `out.html`; `python report.py out.json` rebuilds it). It shows coverage per field, one card per company with each claim's source link, the sourced synthesis (what it does / what changed / still unknown) and a **Brreg** (official registry) or **Web** (company's own verified site) badge, the legal name found on each news page, and search / sort / filter. It works offline, follows light/dark mode, fits phone screens, and escapes all scraped text. A report failure never fails the run.
+Every run also writes a self-contained HTML report next to the JSON (`--output out.json` -> `out.html`; `python report.py out.json` rebuilds it). It shows coverage per field, one card per company with each claim's source link, the sourced synthesis (what it does / what changed / still unknown) and a **Brreg** (official registry) or **Web** (company's own verified site) badge, the legal name found on each news page, search / sort / filter, and a **compare view**: tick up to 4 companies to see them side by side, every value with its source and every gap with its state; the comparison is kept in the URL (`#compare=923609016,982463718`) so it can be shared. It works offline, follows light/dark mode, fits phone screens, and escapes all scraped text. A report failure never fails the run.
 
 ### 100-company smoke test
 
@@ -162,9 +162,11 @@ Every run also writes a self-contained HTML report next to the JSON (`--output o
 | --- | --- |
 | Records | 100 / 100, 0 fallbacks, 0 crashes |
 | Mix | 47 AS, 35 associations (FLI), 12 sole proprietorships, 6 other |
-| Revenue (Brreg) / CEO / website | 37 / 36 / 11 companies |
-| Runtime | 466 s (concurrency 5) |
-| LLM cost | $0.0032 (6 Gemini calls; most entities have no verifiable website) |
+| Revenue (Brreg) / CEO / website | 37 / 36 / 10 companies |
+| Synthesis | 100 / 100 profiles; 63 with sourced changes (renames, revenue trend, results, role changes); 0 unsourced statements |
+| Availability states | 800 field states: 86 available, 649 not_available, 65 not_applicable, 0 failed |
+| Runtime | 461 s (concurrency 5) |
+| LLM cost | $0.0026 (5 Gemini calls; most entities have no verifiable website) |
 
 Expected cost per 100 companies: about $0.003-0.01 for a mix like this, up to about $0.07 for 100 large companies with content-rich sites (one Gemini Flash-Lite call per company with a verified site).
 
