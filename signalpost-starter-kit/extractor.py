@@ -14,6 +14,7 @@ Pipeline:
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 import json
 import logging
 import os
@@ -907,13 +908,21 @@ def _iso_from_match(m: re.Match) -> str | None:
     return None
 
 
-def _labelled_date(rx: re.Pattern, text: str) -> tuple[str, str] | None:
-    """(YYYY-MM-DD, verbatim evidence) for the first labelled date in *text*."""
-    m = rx.search(" ".join(text.split()))
-    if not m:
-        return None
-    iso = _iso_from_match(m)
-    return (iso, m.group(0)) if iso else None
+def _labelled_date(rx: re.Pattern, text: str, label_only: bool = False) -> tuple[str, str] | None:
+    """(YYYY-MM-DD, verbatim evidence) for the first labelled date in *text*.
+
+    With *label_only*, prose mentions are skipped: the label must be capitalised
+    ("Published 12 March 2026", "Publisert 12. mars 2026") or followed by a colon
+    ("published: ..."), so "the announcement published on 21 October" never
+    becomes an article's own date."""
+    for m in rx.finditer(" ".join(text.split())):
+        evidence = m.group(0)
+        if label_only and not (evidence[:1].isupper() or re.match(r"^\w+\s*:", evidence)):
+            continue
+        iso = _iso_from_match(m)
+        if iso:
+            return iso, evidence
+    return None
 
 
 def _ld_date(value) -> str | None:
@@ -1075,7 +1084,7 @@ def _news_item(page: Page, lead: _Lead, evidence: str, today: str) -> CompanyNew
     """Build a news item from its own fetched page (raises ValidationError/ValueError)."""
     if page.published:
         published, date_evidence = page.published, f"datePublished {page.published} (page metadata)"
-    elif found := _labelled_date(_PUBLISHED_TEXT_RE, page.raw_text or page.text):
+    elif found := _labelled_date(_PUBLISHED_TEXT_RE, page.raw_text or page.text, label_only=True):
         published, date_evidence = found
     else:
         raise ValueError("no publication date on the article page")
@@ -1198,6 +1207,11 @@ async def crawl_site_activity(
             why = _first_error(e) if isinstance(e, ValidationError) else str(e)
             log.info("[%s] Rejected %s %s: %s", oid, kind, lead.url, why)
 
+    text_dated = Counter(n.date_evidence for n in news if not n.date_evidence.endswith("(page metadata)"))
+    for n in [n for n in news if text_dated.get(n.date_evidence, 0) > 1]:
+        log.info("[%s] Rejected news %s: date phrase %r repeats across articles (boilerplate)",
+                 oid, n.url, n.date_evidence)
+    news = [n for n in news if text_dated.get(n.date_evidence, 0) <= 1]
     news.sort(key=lambda n: n.published_date, reverse=True)
     return news[:ACTIVITY_MAX_NEWS], jobs[:ACTIVITY_MAX_JOBS]
 

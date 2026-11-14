@@ -354,3 +354,42 @@ if __name__ == "__main__":
         fn()
         print("ok  ", name)
     print(f"{len(tests)} passed")
+
+
+# --- publication dates from text (real case: ir.dnb.no buy-back releases) ---------
+
+def _hub_with(*articles):
+    return Page(NEWS_HUB.url, text="Nyheter", links=[(a.headline, a.url) for a in articles])
+
+
+def test_prose_mention_of_another_date_is_not_the_articles_date():
+    a = Page(f"{SITE}/nyheter/tilbakekjop-uke-45", headline="Nordlys Bygg status tilbakekjøp uke 45", text="Status for tilbakekjøp av aksjer.",
+             raw_text=f"Please see the stock exchange announcement published on 21 October 2026. {FOOTER}")
+    news, _ = crawl([HOME], validator(), FakeSite(_hub_with(a), a))
+    assert news == []  # no labelled date of its own -> not claimed
+    labelled = Page(a.url, headline=a.headline, text=a.text, raw_text=f"Publisert 9. november 2026. {a.raw_text}")
+    news, _ = crawl([HOME], validator(), FakeSite(_hub_with(labelled), labelled))
+    assert [n.published_date for n in news] == ["2026-11-09"]
+
+
+def test_capitalised_or_colon_label_still_accepted():
+    a = Page(f"{SITE}/nyheter/ny-avdeling", headline="Nordlys Bygg åpner ny avdeling i Bodø", text="Vi åpner i Bodø.",
+             raw_text=f"Published: 3 November 2026. Vi åpner. {FOOTER}")
+    news, _ = crawl([HOME], validator(), FakeSite(_hub_with(a), a))
+    assert [n.published_date for n in news] == ["2026-11-03"]
+
+
+def test_identical_text_date_on_several_articles_is_boilerplate():
+    arts = [Page(f"{SITE}/nyheter/sak-{i}", headline=f"Nordlys Bygg sak nummer {i} i Tromsø", text=f"Sak {i}.",
+                 raw_text=f"Publisert 21. oktober 2026 {FOOTER}") for i in range(3)]
+    news, _ = crawl([HOME], validator(), FakeSite(_hub_with(*arts), *arts))
+    assert news == []
+    one, _ = crawl([HOME], validator(), FakeSite(_hub_with(arts[0]), arts[0]))
+    assert len(one) == 1  # the same page alone is fine: only the repetition is rejected
+
+
+def test_shared_metadata_date_is_kept():
+    arts = [Page(f"{SITE}/nyheter/sak-{i}", headline=f"Nordlys Bygg sak nummer {i} i Tromsø", text=f"Sak {i}.",
+                 raw_text=FOOTER, published="2026-08-24") for i in range(2)]
+    news, _ = crawl([HOME], validator(), FakeSite(_hub_with(*arts), *arts))
+    assert len(news) == 2

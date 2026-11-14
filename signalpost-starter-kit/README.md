@@ -110,7 +110,7 @@ Read `docs/competition-control-loop.md`, `docs/external-connectors.md` and the p
 - **Strict content grounding.** A domain is kept only if one of its fetched pages contains the exact Brreg name (case-insensitive) or the 9-digit organisation number (also written as `923 609 016`). When the homepage does not, a bounded same-domain crawl checks the site's about/contact/legal pages (at most 2 link layers and 4 extra fetches per domain) before the domain is rejected. The matching rule itself is never loosened.
 - **Official registry facts.** CEO (the single active *daglig leder*), employee count (only when registered) and revenue (the entity's own accounts - never group/*konsern* figures - latest year, NOK only) come from Brreg's Enhetsregisteret and Regnskapsregisteret, keyed by organisation number. They override web/LLM values and link to the API record that contains them.
 - **Exact-name social profiles.** A social profile is kept only if it is linked from the company's verified site **and** its handle is the exact legal name (case, spacing, punctuation, Norwegian letters and the AS/ASA suffix aside). `telenornorge` is not credited to TELENOR ASA; `equinor` is not credited to EQUINOR ENERGY AS.
-- **News pages must name the entity.** Both LLM news and crawled company news are kept only if the article's own page shows the exact legal name or organisation number. Listing, archive, paginated and utility URLs (`/page/2`, `?filter=`, subscription, newsletter) are never news.
+- **News pages must name the entity.** Both LLM news and crawled company news are kept only if the article's own page shows the exact legal name or organisation number. Listing, archive, paginated and utility URLs (`/page/2`, `?filter=`, subscription, newsletter) are never news. A publication date read from page text must be a label ("Published 3 November 2026", "Publisert:"), never prose such as "the announcement published on 21 October", and a text date phrase that repeats across several articles of a site is treated as boilerplate and rejected.
 - **Off-site redirects are dropped.** Every fetch, including homepages, records where its redirects end. If the final URL is on a different registrable domain, the page is discarded unparsed and never used for grounding or extraction, so a third-party site can never vouch for the entity.
 
 ### Company news and job postings
@@ -130,9 +130,27 @@ Read `docs/competition-control-loop.md`, `docs/external-connectors.md` and the p
 - **Domains.** News must sit on a validated own domain. Postings may also be hosted on a known applicant-tracking system (Teamtailor, Webcruiter, Jobbnorge, Recman, HR Manager, ...) when the company's own site links to them; on an ATS board only that company's own board host is followed. Items on a parent's domain or on a domain that failed grounding are dropped, including from cached snapshots.
 - **Across runs.** `company_news` accumulates by URL like `news`; `job_postings` always reflects the latest run, so a closed posting is never carried forward.
 
+### Synthesis: what it does, what changed, what remains unknown
+
+Every profile carries `intelligence_profile.synthesis`, built deterministically (no LLM) after all verification, only from the Brreg registry records and the already-verified facts. Each statement has a `source_url` and `retrieval_date` (plus a `date` where one applies):
+
+- **`what_it_does`** - legal form, location and founding date; the registered activity quoted verbatim from Brreg; NACE industry; CEO, employees and revenue; the verified website.
+- **`what_changed`** - bankruptcy / liquidation (with dates), previous names, revenue change between the last two fiscal years and the latest annual result (own-entity accounts, NOK), when the *daglig leder* registration last changed, the latest dated news, and open positions.
+- **`unknown`** - each missing field with the specific reason: e.g. *no active daglig leder registered*, *accounts reported in USD, not NOK*, *this organisation form only has to file accounts above certain thresholds*, *no site was found that shows the legal name or org number*.
+
+`summary_of_changes` is regenerated from these statements, so the free-text summary never contains an unsourced claim.
+
+```json
+"what_changed": [
+  {"text": "Previously named STATOIL ASA (until 2018-05-16).",
+   "source_url": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016",
+   "retrieval_date": "2026-11-15", "date": "2018-05-16"}
+]
+```
+
 ### HTML report
 
-Every run also writes a self-contained HTML report next to the JSON (`--output out.json` -> `out.html`; `python report.py out.json` rebuilds it). It shows coverage per field, one card per company with each claim's source link and a **Brreg** (official registry) or **Web** (company's own verified site) badge, the legal name found on each news page, and search / sort / filter. It works offline, follows light/dark mode, fits phone screens, and escapes all scraped text. A report failure never fails the run.
+Every run also writes a self-contained HTML report next to the JSON (`--output out.json` -> `out.html`; `python report.py out.json` rebuilds it). It shows coverage per field, one card per company with each claim's source link, the sourced synthesis (what it does / what changed / still unknown) and a **Brreg** (official registry) or **Web** (company's own verified site) badge, the legal name found on each news page, and search / sort / filter. It works offline, follows light/dark mode, fits phone screens, and escapes all scraped text. A report failure never fails the run.
 
 ### 100-company smoke test
 

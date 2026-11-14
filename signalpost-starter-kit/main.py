@@ -36,7 +36,8 @@ from schema import CompanyProfile
 from storage import init_db, get_cached_profile, save_company_snapshot
 from diff_engine import apply_diff_and_reconciliation
 from domain_validator import DomainValidator
-from official_facts import enrich_with_official_facts
+from official_facts import enrich_with_official
+from synthesis import attach_synthesis
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -280,8 +281,9 @@ async def process_company(
 
         # Official registry facts (CEO, employees, revenue) for the exact entity.
         # Applied on every path, including LLM fallbacks.
+        official_context = None
         if enhet is not None:
-            profile = await enrich_with_official_facts(enhet.organisasjonsnummer, profile)
+            profile, official_context = await enrich_with_official(enhet.organisasjonsnummer, profile)
 
         elapsed = time.perf_counter() - t0
         raw_result = _build_result(orgnr, enhet, profile, fallback_reason, elapsed)
@@ -294,6 +296,8 @@ async def process_company(
                 # Don't let the diff engine "preserve" a parent's site cached by an earlier run
                 cached_result = validator.purge_cached(cached_result)
             final_result, _explanation = apply_diff_and_reconciliation(cached_result, raw_result)
+            # Sourced synthesis of the final (reconciled) record: does / changed / unknown.
+            final_result = attach_synthesis(final_result, official_context)
             company_name = (
                 (enhet.navn if enhet else None)
                 or final_result.get("brreg_metadata", {}).get("navn")
@@ -303,7 +307,7 @@ async def process_company(
         except Exception as e:
             log.error("[%s] State tracking failed (%s: %s); returning unreconciled result.",
                       orgnr, type(e).__name__, e)
-            final_result = raw_result
+            final_result = attach_synthesis(raw_result, official_context)
 
         log.info(
             "[%s] Done in %.1f s  |  status=%s",

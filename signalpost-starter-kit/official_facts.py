@@ -43,7 +43,7 @@ async def _get_json(client: httpx.AsyncClient, url: str):
             if r.status_code in (204, 404, 410):
                 return None
             if r.status_code == 500 and "ikke er stottet" in r.text:
-                return None  # e.g. bank/insurance accounts: unsupported format, permanent
+                return {"_unsupported": True}  # e.g. bank/insurance accounts: permanent
             if r.status_code == 429 or r.status_code >= 500:
                 raise httpx.HTTPStatusError("retryable", request=r.request, response=r)
             r.raise_for_status()
@@ -109,9 +109,12 @@ def parse_revenue_nok(accounts) -> int | None:
 # Fetch + apply
 # ---------------------------------------------------------------------------
 
-async def fetch_official_facts(orgnr: str) -> dict[str, SourcedFact]:
-    """Return the official facts available for *orgnr* (missing ones omitted).
+async def fetch_official(orgnr: str) -> tuple[dict[str, SourcedFact], dict]:
+    """Official facts for *orgnr* plus the raw Brreg context used by the synthesis.
 
+    ``context`` = ``{"urls": {...}, "entity": body|None, "roles": body|None,
+    "accounts": body|None, "ok": {"entity": bool, ...}}``; ``ok`` is False only
+    when the request itself failed (a 404 is a successful "nothing there").
     Each endpoint fails independently; a failure just omits that fact.
     """
     today = date.today().isoformat()
@@ -124,22 +127,28 @@ async def fetch_official_facts(orgnr: str) -> dict[str, SourcedFact]:
         results = await asyncio.gather(
             *(_get_json(client, u) for u in urls.values()), return_exceptions=True
         )
-    bodies = {}
+    context: dict = {"urls": urls, "ok": {}, "retrieval_date": today}
     for key, res in zip(urls, results):
         if isinstance(res, Exception):
             log.warning("[%s] Brreg %s fetch failed: %s", orgnr, key, res)
-            bodies[key] = None
+            context[key], context["ok"][key] = None, False
         else:
-            bodies[key] = res
+            context[key], context["ok"][key] = res, True
 
     facts: dict[str, SourcedFact] = {}
     for field, value, key in (
-        ("ceo_name", parse_ceo(bodies["roles"]), "roles"),
-        ("employee_count", parse_employees(bodies["entity"]), "entity"),
-        ("latest_revenue_nok", parse_revenue_nok(bodies["accounts"]), "accounts"),
+        ("ceo_name", parse_ceo(context["roles"]), "roles"),
+        ("employee_count", parse_employees(context["entity"]), "entity"),
+        ("latest_revenue_nok", parse_revenue_nok(context["accounts"]), "accounts"),
     ):
         if value is not None:
             facts[field] = SourcedFact(fact_value=value, source_url=urls[key], retrieval_date=today)
+    return facts, context
+
+
+async def fetch_official_facts(orgnr: str) -> dict[str, SourcedFact]:
+    """Return the official facts available for *orgnr* (missing ones omitted)."""
+    facts, _ = await fetch_official(orgnr)
     return facts
 
 
@@ -148,10 +157,17 @@ def apply_official_facts(profile: CompanyProfile, facts: dict[str, SourcedFact])
     return profile.model_copy(update=facts) if facts else profile
 
 
-async def enrich_with_official_facts(orgnr: str, profile: CompanyProfile) -> CompanyProfile:
-    """Never raises: on any failure the profile is returned unchanged."""
+async def enrich_with_official(orgnr: str, profile: CompanyProfile) -> tuple[CompanyProfile, dict | None]:
+    """Never raises: on any failure the profile is returned unchanged with no context."""
     try:
-        return apply_official_facts(profile, await fetch_official_facts(orgnr))
+        facts, context = await fetch_official(orgnr)
+        return apply_official_facts(profile, facts), context
     except Exception as e:  # noqa: BLE001
         log.warning("[%s] Official facts skipped: %s", orgnr, e)
-        return profile
+        return profile, None
+
+
+async def enrich_with_official_facts(orgnr: str, profile: CompanyProfile) -> CompanyProfile:
+    """Never raises: on any failure the profile is returned unchanged."""
+    profile, _ = await enrich_with_official(orgnr, profile)
+    return profile

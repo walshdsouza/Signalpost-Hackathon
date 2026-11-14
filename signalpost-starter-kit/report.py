@@ -157,6 +157,25 @@ def _news_list(items: list[dict], title: str, name: str = "", orgnr: str = "") -
     return f'<section><h4>{esc(title)} <span class="count">{len(items)}</span></h4><ul class="items">{"".join(rows)}</ul></section>'
 
 
+def _synthesis(syn) -> str:
+    """What it does / what changed / what remains unknown, each line with its source."""
+    if not isinstance(syn, dict):
+        return ""
+    blocks = []
+    for key, title in (("what_it_does", "What it does"), ("what_changed", "What changed")):
+        rows = [f'<li>{esc(s.get("text"))} {link(s.get("source_url"), "source", "src") if safe_url(s.get("source_url")) else ""}</li>'
+                for s in syn.get(key) or [] if isinstance(s, dict)]
+        if rows:
+            blocks.append(f'<div class="syn"><h5>{title}</h5><ul>{"".join(rows)}</ul></div>')
+    unknown = [u for u in syn.get("unknown") or [] if isinstance(u, dict)]
+    if unknown:
+        rows = "".join(f'<li>{esc(u.get("reason"))}</li>' for u in unknown)
+        blocks.append(f'<div class="syn unk"><h5>Still unknown</h5><ul>{rows}</ul></div>')
+    if not blocks:
+        return ""
+    return f'<details class="profile" open><summary>Profile summary</summary>{"".join(blocks)}</details>'
+
+
 def _jobs_list(items: list[dict]) -> str:
     if not items:
         return ""
@@ -232,6 +251,7 @@ def _company_card(orgnr: str, rec: dict) -> tuple[str, dict]:
   {social_html}
   {_news_list(all_news, "News", name, orgnr)}
   {_jobs_list(jobs)}
+  {_synthesis(p.get("synthesis"))}
 </article>"""
     return card, stats
 
@@ -334,6 +354,12 @@ section h4 {{ font-size:13px; margin:14px 0 6px; color:var(--muted); text-transf
 .items li {{ padding:5px 0; border-top:1px solid var(--line); font-size:14px; overflow-wrap:anywhere; }}
 .items time {{ color:var(--muted); font-variant-numeric:tabular-nums; font-size:12.5px; margin-right:4px; }}
 .ev {{ color:var(--muted); font-size:12px; font-style:italic; }}
+.profile {{ margin-top:14px; border-top:1px solid var(--line); padding-top:8px; }}
+.profile summary {{ cursor:pointer; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }}
+.syn h5 {{ margin:10px 0 4px; font-size:12.5px; }}
+.syn ul {{ margin:0; padding-left:18px; font-size:13.5px; }}
+.syn li {{ margin:3px 0; overflow-wrap:anywhere; }}
+.unk li {{ color:var(--muted); }}
 .summary {{ color:var(--muted); font-size:13px; margin:12px 0 0; }}
 .muted {{ color:var(--muted); }}
 .empty {{ font-size:13px; margin:6px 0; }}
