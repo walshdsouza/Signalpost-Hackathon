@@ -5,3 +5,7 @@ __pycache__/
 *.db
 batch_1000.txt
 ROADMAP.md
+
+# Python build artifacts
+build/
+*.egg-info/
