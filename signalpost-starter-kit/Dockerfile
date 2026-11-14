@@ -12,13 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project specifications and lockfiles
-COPY pyproject.toml .
+# Copy project specifications and the pinned dependency set
+COPY pyproject.toml requirements.lock ./
 COPY uv.lock* ./
 
-# Upgrade pip and install package dependencies
+# Upgrade pip and install dependencies at the exact verified versions
 RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir -c requirements.lock .
 
 # Copy remaining project source files
 COPY . .

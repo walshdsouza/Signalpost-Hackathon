@@ -134,6 +134,31 @@ Read `docs/competition-control-loop.md`, `docs/external-connectors.md` and the p
 
 Every run also writes a self-contained HTML report next to the JSON (`--output out.json` -> `out.html`; `python report.py out.json` rebuilds it). It shows coverage per field, one card per company with each claim's source link and a **Brreg** (official registry) or **Web** (company's own verified site) badge, the legal name found on each news page, and search / sort / filter. It works offline, follows light/dark mode, fits phone screens, and escapes all scraped text. A report failure never fails the run.
 
+### 100-company smoke test
+
+`reports/` holds a full run on 100 companies drawn at random (seed `20261115`) from the 1,000-company batch: input `smoke-100.txt`, results `smoke-100.json`, report `smoke-100.html`. Command: `python main.py reports/smoke-100.txt --output reports/smoke-100.json`.
+
+| Result | Value |
+| --- | --- |
+| Records | 100 / 100, 0 fallbacks, 0 crashes |
+| Mix | 47 AS, 35 associations (FLI), 12 sole proprietorships, 6 other |
+| Revenue (Brreg) / CEO / website | 37 / 36 / 11 companies |
+| Runtime | 466 s (concurrency 5) |
+| LLM cost | $0.0032 (6 Gemini calls; most entities have no verifiable website) |
+
+Expected cost per 100 companies: about $0.003-0.01 for a mix like this, up to about $0.07 for 100 large companies with content-rich sites (one Gemini Flash-Lite call per company with a verified site).
+
+### Run with Docker
+
+```bash
+docker build -t signalpost .
+docker run --rm -e GEMINI_API_KEY=<key> -v "$PWD/data:/data" signalpost /data/input_orgs.jsonl --output /data/out.json
+# -> /data/out.json and /data/out.html
+```
+
+- **Pinned dependencies.** `requirements.lock` holds the exact 78-package set verified on Linux + CPython 3.13 (the `python:3.13-slim` base): clean install, full test suite and live end-to-end runs. The Dockerfile installs with `pip install -c requirements.lock .`, so a new upstream release cannot change what runs. Without Docker: `pip install -c requirements.lock .`
+- **Nothing local is baked in.** `.dockerignore` keeps `.env` (pass the key with `-e`), the snapshot cache, virtualenvs and build artifacts out of the image. With no arguments the image prints usage.
+
 ### Cost Efficiency
 
 - **API key short-circuit.** The Gemini key is probed once at start-up, and a rejected key disables the LLM for the rest of the run. Every company then returns its Brreg baseline immediately, with no search, scraping or LLM calls spent on a key that cannot work.

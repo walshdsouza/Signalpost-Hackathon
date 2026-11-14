@@ -1,0 +1,1632 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signalpost Company Report</title>
+<style>
+:root {
+  --bg:#f6f7f9; --panel:#fff; --text:#16181d; --muted:#626a77; --line:#e3e6eb;
+  --accent:#1f5eff; --official:#0f7b4d; --official-bg:#e3f5ec; --web:#2a5bd7; --web-bg:#e6edfc;
+  --warn:#8a5a00; --warn-bg:#fff4dc; --chip:#eef0f4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0f1115; --panel:#171a21; --text:#e7e9ee; --muted:#9aa3b2; --line:#2a2f3a;
+    --accent:#6f9bff; --official:#5fd39b; --official-bg:#16352a; --web:#8fb0ff; --web-bg:#1c2846;
+    --warn:#f2c26b; --warn-bg:#3a2e14; --chip:#232834;
+  }
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+.wrap { max-width:1180px; margin:0 auto; padding:24px 16px 64px; }
+h1 { font-size:24px; margin:0 0 4px; }
+.lede { color:var(--muted); margin:0 0 20px; }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+.overview { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+.overview h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 10px; }
+.bar { display:grid; grid-template-columns:84px 1fr 92px; align-items:center; gap:10px; font-size:13px; margin:6px 0; }
+.track { height:8px; background:var(--chip); border-radius:99px; overflow:hidden; }
+.fill { display:block; height:100%; background:var(--accent); border-radius:99px; }
+.bn { text-align:right; font-variant-numeric:tabular-nums; }
+.legend p { margin:6px 0; font-size:13.5px; }
+.controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:0 0 16px; }
+.controls input[type=search] { flex:1 1 260px; padding:10px 12px; border-radius:8px; border:1px solid var(--line);
+  background:var(--panel); color:var(--text); font:inherit; }
+.controls select, .controls label { font:inherit; font-size:14px; color:var(--text); }
+.controls select { padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel); }
+#shown { color:var(--muted); font-size:13px; margin-left:auto; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:14px; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; min-width:0; }
+.card header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.card h3 { font-size:16px; margin:0; overflow-wrap:anywhere; }
+.sub { color:var(--muted); font-size:12.5px; margin:2px 0 10px; overflow-wrap:anywhere; }
+.score { flex:none; min-width:30px; height:30px; padding:0 8px; border-radius:99px; display:grid; place-items:center;
+  background:var(--chip); font-weight:600; font-size:13px; }
+.facts { margin:0; }
+.fact { display:grid; grid-template-columns:132px 1fr; gap:8px; padding:5px 0; border-top:1px solid var(--line); }
+.fact dt { color:var(--muted); font-size:13px; }
+.fact dd { margin:0; overflow-wrap:anywhere; }
+.meta { display:block; font-size:12px; color:var(--muted); }
+.badge { display:inline-block; font-size:11px; font-weight:600; padding:1px 7px; border-radius:99px; margin-left:4px; vertical-align:1px; }
+.official { color:var(--official); background:var(--official-bg); }
+.web { color:var(--web); background:var(--web-bg); }
+.socials { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 2px; }
+.chip { background:var(--chip); padding:3px 10px; border-radius:99px; font-size:13px; }
+section h4 { font-size:13px; margin:14px 0 6px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.count { background:var(--chip); color:var(--text); border-radius:99px; padding:0 7px; font-size:11px; margin-left:4px; }
+.items { list-style:none; margin:0; padding:0; }
+.items li { padding:5px 0; border-top:1px solid var(--line); font-size:14px; overflow-wrap:anywhere; }
+.items time { color:var(--muted); font-variant-numeric:tabular-nums; font-size:12.5px; margin-right:4px; }
+.ev { color:var(--muted); font-size:12px; font-style:italic; }
+.summary { color:var(--muted); font-size:13px; margin:12px 0 0; }
+.muted { color:var(--muted); }
+.empty { font-size:13px; margin:6px 0; }
+.warn { background:var(--warn-bg); color:var(--warn); padding:6px 10px; border-radius:8px; font-size:13px; }
+.src { font-size:12px; }
+.none { text-align:center; color:var(--muted); padding:40px 0; display:none; }
+@media (max-width:720px) {
+  .overview { grid-template-columns:1fr; }
+  .grid { grid-template-columns:1fr; }
+  .fact { grid-template-columns:1fr; gap:0; }
+  #shown { margin-left:0; width:100%; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Signalpost company report</h1>
+  <p class="lede">100 companies · generated 2026-11-15 02:53 · runtime 466.18 s · LLM cost $0.0031904</p>
+
+  <div class="overview">
+    <div class="panel"><h2>Coverage</h2><div class="bar"><span class="bl">Website</span><span class="track"><span class="fill" style="width:11%"></span></span><span class="bn">11 <span class="muted">(11%)</span></span></div><div class="bar"><span class="bl">CEO</span><span class="track"><span class="fill" style="width:36%"></span></span><span class="bn">36 <span class="muted">(36%)</span></span></div><div class="bar"><span class="bl">Employees</span><span class="track"><span class="fill" style="width:2%"></span></span><span class="bn">2 <span class="muted">(2%)</span></span></div><div class="bar"><span class="bl">Revenue</span><span class="track"><span class="fill" style="width:37%"></span></span><span class="bn">37 <span class="muted">(37%)</span></span></div><div class="bar"><span class="bl">Socials</span><span class="track"><span class="fill" style="width:2%"></span></span><span class="bn">2 <span class="muted">(2%)</span></span></div><div class="bar"><span class="bl">News</span><span class="track"><span class="fill" style="width:0%"></span></span><span class="bn">0 <span class="muted">(0%)</span></span></div><div class="bar"><span class="bl">Open jobs</span><span class="track"><span class="fill" style="width:0%"></span></span><span class="bn">0 <span class="muted">(0%)</span></span></div></div>
+    <div class="panel legend"><h2>How to read this</h2>
+      <p><span class="badge official">Brreg</span> Official registry data for this exact organisation number.</p>
+      <p><span class="badge web">Web</span> Found on the company's own website, on a page that shows its legal name or org number. Each claim links to that page.</p>
+      <p>Company news shows the legal name or org number found on the article page itself. Social profiles are listed only when the handle is the company's exact legal name.</p>
+      <p>The number on each card counts that company's verified signals.</p>
+    </div>
+  </div>
+
+  <div class="controls">
+    <input type="search" id="q" placeholder="Search by name, org.nr, industry or place" aria-label="Search companies">
+    <select id="sort" aria-label="Sort companies">
+      <option value="signals">Most signals first</option>
+      <option value="name">Name A–Z</option>
+    </select>
+    <label><input type="checkbox" id="web"> Only companies with web data</label>
+    <span id="shown" aria-live="polite"></span>
+  </div>
+
+  <div class="grid" id="grid">
+<article class="card" data-search="1532-186/468 927400227 aktiviteter i borettslag og boligsameier c/o martin joakim valderhaug, skjongstranda 50, 6050 valderøya" data-signals="0" data-name="1532-186/468"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1532-186/468</h3>
+      <p class="sub">Org.nr 927400227 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/927400227" target="_blank" rel="noopener noreferrer">Brreg</a> · ESEK · Aktiviteter i borettslag og boligsameier · c/o Martin Joakim Valderhaug, Skjongstranda 50, 6050 VALDERØYA</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="10milesnorth as 919169494 drift av vandrerhjem og ferieleiligheter fagerheim, 8185 vågaholmen" data-signals="2" data-name="10milesnorth as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>10MILESNORTH AS</h3>
+      <p class="sub">Org.nr 919169494 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/919169494" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Drift av vandrerhjem og ferieleiligheter · Fagerheim, 8185 VÅGAHOLMEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Christopher Heinrich Wilhelm Scheibe <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/919169494/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 3.4 m <span class="muted">(3 435 637)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/919169494" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1863 properties as 934072391 utleie av egen eller leid fast eiendom c/o malling &amp; co forvaltning as, dronning mauds gate 15, 0250 oslo" data-signals="0" data-name="1863 properties as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1863 PROPERTIES AS</h3>
+      <p class="sub">Org.nr 934072391 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/934072391" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Utleie av egen eller leid fast eiendom · c/o Malling &amp; Co Forvaltning AS, Dronning Mauds gate 15, 0250 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="17. mai-komité frøyland skule 931023365 aktiviteter i andre medlemsorganisasjoner ellers " data-signals="0" data-name="17. mai-komité frøyland skule"
+  data-web="0">
+  <header>
+    <div>
+      <h3>17. MAI-KOMITÉ FRØYLAND SKULE</h3>
+      <p class="sub">Org.nr 931023365 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/931023365" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2 gode venner as 924534796 drift av barer c. j. hambros plass 5, 0164 oslo" data-signals="1" data-name="2 gode venner as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2 GODE VENNER AS</h3>
+      <p class="sub">Org.nr 924534796 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/924534796" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Drift av barer · C. J. Hambros plass 5, 0164 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 0 <span class="muted">(0)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/924534796" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="100% holding as 930829064 uoppgitt solastrandvegen 153a, 4055 sola" data-signals="2" data-name="100% holding as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>100% HOLDING AS</h3>
+      <p class="sub">Org.nr 930829064 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/930829064" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · Solastrandvegen 153A, 4055 SOLA</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Carl Johan Raugstad <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/930829064/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 0 <span class="muted">(0)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/930829064" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1.618 group as 916353790 andre helsetjenester ellers hagaliveien 5b, 1358 jar" data-signals="1" data-name="1.618 group as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1.618 GROUP AS</h3>
+      <p class="sub">Org.nr 916353790 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/916353790" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Andre helsetjenester ellers · Hagaliveien 5B, 1358 JAR</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 684 k <span class="muted">(684 200)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/916353790" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2010-kullet 920846475 aktiviteter i andre medlemsorganisasjoner ellers c/o bjørn tore hagen, movegen 20, 8700 nesna" data-signals="0" data-name="2010-kullet"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2010-KULLET</h3>
+      <p class="sub">Org.nr 920846475 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/920846475" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Bjørn Tore Hagen, Movegen 20, 8700 NESNA</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="10w spitzmüller petrophysics consulting 928991938 andre tjenester tilknyttet utvinning av råolje og naturgass grensevegen 19a, 1929 auli" data-signals="0" data-name="10w spitzmüller petrophysics consulting"
+  data-web="0">
+  <header>
+    <div>
+      <h3>10W SPITZMÜLLER PETROPHYSICS CONSULTING</h3>
+      <p class="sub">Org.nr 928991938 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/928991938" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Andre tjenester tilknyttet utvinning av råolje og naturgass · Grensevegen 19A, 1929 AULI</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1337 invest as 917825491 andre egeninvesteringsselskaper måltrostveien 24b, 0786 oslo" data-signals="0" data-name="1337 invest as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1337 INVEST AS</h3>
+      <p class="sub">Org.nr 917825491 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/917825491" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Andre egeninvesteringsselskaper · Måltrostveien 24B, 0786 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="10w-30 motor club 913058143 aktiviteter i andre medlemsorganisasjoner ellers råholtgutua 12, 2070 råholt" data-signals="0" data-name="10w-30 motor club"
+  data-web="0">
+  <header>
+    <div>
+      <h3>10W-30 MOTOR CLUB</h3>
+      <p class="sub">Org.nr 913058143 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/913058143" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Råholtgutua 12, 2070 RÅHOLT</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1. lista speidergruppe 997927427 aktiviteter i andre medlemsorganisasjoner ellers langåker, 4560 vanse" data-signals="0" data-name="1. lista speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1. LISTA SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 997927427 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/997927427" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Langåker, 4560 VANSE</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="05060 taxi as 933373142 passasjertransport på forespørsel utført av fører med kjøretøy aabys gate 4a, 3041 drammen" data-signals="2" data-name="05060 taxi as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>05060 TAXI AS</h3>
+      <p class="sub">Org.nr 933373142 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/933373142" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Passasjertransport på forespørsel utført av fører med kjøretøy · Aabys gate 4A, 3041 DRAMMEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Jan Erik Jahnsen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/933373142/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 0 <span class="muted">(0)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/933373142" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2017-kullet hemnes sentralskole 932258935 aktiviteter i andre medlemsorganisasjoner ellers juvikvegen 26, 8640 hemnesberget" data-signals="0" data-name="2017-kullet hemnes sentralskole"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2017-KULLET HEMNES SENTRALSKOLE</h3>
+      <p class="sub">Org.nr 932258935 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/932258935" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Juvikvegen 26, 8640 HEMNESBERGET</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="12 mill race 995932601 aktiviteter i andre medlemsorganisasjoner ellers bratliveien 15, 1605 fredrikstad" data-signals="1" data-name="12 mill race"
+  data-web="0">
+  <header>
+    <div>
+      <h3>12 MILL RACE</h3>
+      <p class="sub">Org.nr 995932601 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/995932601" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Bratliveien 15, 1605 FREDRIKSTAD</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Jan Kåre Fjeld <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/995932601/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1300 kj erland 954659623 produksjon av keramiske husholdningsartikler og dekorasjonsgjenstander hetlandsgata 14, 4344 bryne" data-signals="0" data-name="1300 kj erland"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1300 KJ ERLAND</h3>
+      <p class="sub">Org.nr 954659623 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/954659623" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Produksjon av keramiske husholdningsartikler og dekorasjonsgjenstander · Hetlandsgata 14, 4344 BRYNE</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1895 supporterklubb 999522424 aktiviteter i andre medlemsorganisasjoner ellers ullerålsgata 7, 3513 hønefoss" data-signals="0" data-name="1895 supporterklubb"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1895 SUPPORTERKLUBB</h3>
+      <p class="sub">Org.nr 999522424 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/999522424" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Ullerålsgata 7, 3513 HØNEFOSS</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="17. mai-komiteen ved stathelle barneskole 935197996 aktiviteter i andre medlemsorganisasjoner ellers c/o linn dragsten olsen, krabberødstrand terrasse 6a, 3960 stathelle" data-signals="0" data-name="17. mai-komiteen ved stathelle barneskole"
+  data-web="0">
+  <header>
+    <div>
+      <h3>17. MAI-KOMITEEN VED STATHELLE BARNESKOLE</h3>
+      <p class="sub">Org.nr 935197996 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/935197996" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Linn Dragsten Olsen, Krabberødstrand terrasse 6A, 3960 STATHELLE</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search=":-) invest as 995849364 bedriftsrådgivning og annen administrativ rådgivning skanselien 37, 5034 bergen" data-signals="2" data-name=":-) invest as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>:-) INVEST AS</h3>
+      <p class="sub">Org.nr 995849364 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/995849364" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Bedriftsrådgivning og annen administrativ rådgivning · Skanselien 37, 5034 BERGEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Eric Francois Lithun <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/995849364/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 90 k <span class="muted">(90 290)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/995849364" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1779 holding as 931744682 uoppgitt hjortefaret 4, 1779 halden" data-signals="1" data-name="1779 holding as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1779 HOLDING AS</h3>
+      <p class="sub">Org.nr 931744682 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/931744682" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · Hjortefaret 4, 1779 HALDEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Adam Braimi Rise <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/931744682/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="12,7 audio anders emil gjelsvik 916501838 andre tjenester tilknyttet kunstnerisk virksomhet og underholdningsvirksomhet arnljot gellines vei 35, 0657 oslo" data-signals="0" data-name="12,7 audio anders emil gjelsvik"
+  data-web="0">
+  <header>
+    <div>
+      <h3>12,7 AUDIO ANDERS EMIL GJELSVIK</h3>
+      <p class="sub">Org.nr 916501838 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/916501838" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Andre tjenester tilknyttet kunstnerisk virksomhet og underholdningsvirksomhet · Arnljot Gellines vei 35, 0657 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1000 mile norge as 868260912 detaljhandel med sportsvarer korvettveien 31, 4374 egersund" data-signals="5" data-name="1000 mile norge as"
+  data-web="1">
+  <header>
+    <div>
+      <h3>1000 MILE NORGE AS</h3>
+      <p class="sub">Org.nr 868260912 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/868260912" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Detaljhandel med sportsvarer · Korvettveien 31, 4374 EGERSUND</p>
+    </div>
+    <span class="score" title="Verified signals for this company">5</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://1000milenorge.no/" target="_blank" rel="noopener noreferrer">1000milenorge.no</a> <span class="badge web" title="Found on the company's own verified website">Web</span><span class="meta"><a class="src" href="https://1000milenorge.no/" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>CEO (daglig leder)</dt><dd>Tollak Ingard Leidland <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/868260912/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 54 k <span class="muted">(53 695)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/868260912" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  <div class="socials"><a class="chip" href="https://facebook.com/1000MileNorge" target="_blank" rel="noopener noreferrer">Facebook</a><a class="chip" href="https://instagram.com/1000mile_norge" target="_blank" rel="noopener noreferrer">Instagram</a></div>
+  
+  
+</article>
+<article class="card" data-search="137 aktiv 936434002 aktiviteter i idrettslag og -klubber lørenveien 50, 0585 oslo" data-signals="0" data-name="137 aktiv"
+  data-web="0">
+  <header>
+    <div>
+      <h3>137 AKTIV</h3>
+      <p class="sub">Org.nr 936434002 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/936434002" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i idrettslag og -klubber · Lørenveien 50, 0585 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2-rayz syndicate touray 993877379 produksjon av film, video og fjernsynsprogrammer jordstjerneveien 38e, 1283 oslo" data-signals="1" data-name="2-rayz syndicate touray"
+  data-web="1">
+  <header>
+    <div>
+      <h3>2-RAYZ SYNDICATE TOURAY</h3>
+      <p class="sub">Org.nr 993877379 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/993877379" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Produksjon av film, video og fjernsynsprogrammer · Jordstjerneveien 38E, 1283 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://www.2-rayz.com" target="_blank" rel="noopener noreferrer">2-rayz.com</a> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/993877379" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2 minutter for holding as 921260717 kjøp og salg av egen fast eiendom johs faales vei 18, 1363 høvik" data-signals="2" data-name="2 minutter for holding as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2 MINUTTER FOR HOLDING AS</h3>
+      <p class="sub">Org.nr 921260717 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/921260717" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Kjøp og salg av egen fast eiendom · Johs Faales vei 18, 1363 HØVIK</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Jørgen Jensen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/921260717/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 20 k <span class="muted">(20 000)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/921260717" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1-2-3 bygg og montasjeservice as 930819956 snekkerarbeid nordlysbuen 10, 8007 bodø" data-signals="1" data-name="1-2-3 bygg og montasjeservice as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1-2-3 BYGG OG MONTASJESERVICE AS</h3>
+      <p class="sub">Org.nr 930819956 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/930819956" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Snekkerarbeid · Nordlysbuen 10, 8007 BODØ</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 20 k <span class="muted">(20 066)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/930819956" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1814salmon as 929369661 frysing og videre bearbeiding av fisk, skalldyr og bløtdyr industrivegen 82, 2072 dal" data-signals="3" data-name="1814salmon as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1814SALMON AS</h3>
+      <p class="sub">Org.nr 929369661 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/929369661" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Frysing og videre bearbeiding av fisk, skalldyr og bløtdyr · Industrivegen 82, 2072 DAL</p>
+    </div>
+    <span class="score" title="Verified signals for this company">3</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Roy Olsen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/929369661/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Employees</dt><dd>79 <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/929369661" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 98.1 m <span class="muted">(98 077 548)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/929369661" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="+2 interiør as 995451697 interiørdesignvirksomhet olaf helsets vei 5, 0694 oslo" data-signals="3" data-name="+2 interiør as"
+  data-web="1">
+  <header>
+    <div>
+      <h3>+2 INTERIØR AS</h3>
+      <p class="sub">Org.nr 995451697 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/995451697" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Interiørdesignvirksomhet · Olaf Helsets vei 5, 0694 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">3</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://pluss2.no/" target="_blank" rel="noopener noreferrer">pluss2.no</a> <span class="badge web" title="Found on the company's own verified website">Web</span><span class="meta"><a class="src" href="https://pluss2.no/" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>CEO (daglig leder)</dt><dd>Charlotte Selmer Gravdahl <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/995451697/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 7.4 m <span class="muted">(7 364 644)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/995451697" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1314981 ontario limited 994064061 konsulentvirksomhet tilknyttet informasjonsteknologi og forvaltning og drift av it-systemer " data-signals="0" data-name="1314981 ontario limited"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1314981 ONTARIO LIMITED</h3>
+      <p class="sub">Org.nr 994064061 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/994064061" target="_blank" rel="noopener noreferrer">Brreg</a> · NUF · Konsulentvirksomhet tilknyttet informasjonsteknologi og forvaltning og drift av it-systemer</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="&amp;mf holding as 925391093 reparasjon og vedlikehold av maskiner skogduevegen 66b, 2032 maura" data-signals="1" data-name="&amp;mf holding as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>&amp;MF HOLDING AS</h3>
+      <p class="sub">Org.nr 925391093 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/925391093" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Reparasjon og vedlikehold av maskiner · Skogduevegen 66B, 2032 MAURA</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 0 <span class="muted">(0)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/925391093" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="100% lyd as 924790822 andre tjenester tilknyttet kunstnerisk virksomhet og underholdningsvirksomhet josefines gate 3a, 0351 oslo" data-signals="2" data-name="100% lyd as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>100% LYD AS</h3>
+      <p class="sub">Org.nr 924790822 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/924790822" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Andre tjenester tilknyttet kunstnerisk virksomhet og underholdningsvirksomhet · Josefines gate 3A, 0351 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Per Egil Nygård <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/924790822/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 678 k <span class="muted">(678 488)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/924790822" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1337 capital as 932224488 uoppgitt gosenstien 17a, 4041 hafrsfjord" data-signals="1" data-name="1337 capital as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1337 CAPITAL AS</h3>
+      <p class="sub">Org.nr 932224488 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/932224488" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · Gosenstien 17A, 4041 HAFRSFJORD</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 0 <span class="muted">(0)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/932224488" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1157 holding as 937194854 uoppgitt romundstadveien 167, 4957 risør" data-signals="0" data-name="1157 holding as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1157 HOLDING AS</h3>
+      <p class="sub">Org.nr 937194854 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/937194854" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · Romundstadveien 167, 4957 RISØR</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="10 inch garage v/torp 995625695 reparasjon og vedlikehold av motorvogner gjerivegen 12a, 2022 gjerdrum" data-signals="0" data-name="10 inch garage v/torp"
+  data-web="0">
+  <header>
+    <div>
+      <h3>10 INCH GARAGE V/TORP</h3>
+      <p class="sub">Org.nr 995625695 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/995625695" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Reparasjon og vedlikehold av motorvogner · Gjerivegen 12A, 2022 GJERDRUM</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1harmoni as 923874844 produksjon av film, video og fjernsynsprogrammer c/o liew ceng teng h 0601, dronning eufemias gate 20, 0191 oslo" data-signals="3" data-name="1harmoni as"
+  data-web="1">
+  <header>
+    <div>
+      <h3>1HARMONI AS</h3>
+      <p class="sub">Org.nr 923874844 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/923874844" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Produksjon av film, video og fjernsynsprogrammer · c/o Liew Ceng Teng H 0601, Dronning Eufemias gate 20, 0191 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">3</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="http://1harmoni.no/" target="_blank" rel="noopener noreferrer">1harmoni.no</a> <span class="badge web" title="Found on the company's own verified website">Web</span><span class="meta"><a class="src" href="http://1harmoni.no/" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>CEO (daglig leder)</dt><dd>Ceng Teng Liew <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/923874844/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 8 k <span class="muted">(7 500)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/923874844" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="06 tommy rykhus johansen 919725737 skapende kunstnerisk virksomhet innenfor komposisjon av musikk eckersbergs gate 2a, 0267 oslo" data-signals="0" data-name="06 tommy rykhus johansen"
+  data-web="0">
+  <header>
+    <div>
+      <h3>06 TOMMY RYKHUS JOHANSEN</h3>
+      <p class="sub">Org.nr 919725737 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/919725737" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Skapende kunstnerisk virksomhet innenfor komposisjon av musikk · Eckersbergs gate 2A, 0267 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2014-laget 925798150 aktiviteter i idrettslag og -klubber c/o ole-petter berge, hamarveien 2, 1464 fjellhamar" data-signals="0" data-name="2014-laget"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2014-LAGET</h3>
+      <p class="sub">Org.nr 925798150 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/925798150" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i idrettslag og -klubber · c/o Ole-Petter Berge, Hamarveien 2, 1464 FJELLHAMAR</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="mirozada veynor 935446449 dataprogrammeringstjenester røysumvegen 45a, 3801 bø i telemark" data-signals="0" data-name="mirozada veynor"
+  data-web="0">
+  <header>
+    <div>
+      <h3>MIROZADA VEYNOR</h3>
+      <p class="sub">Org.nr 935446449 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/935446449" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Dataprogrammeringstjenester · Røysumvegen 45A, 3801 BØ I TELEMARK</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="10m light solutions as 833431862 industri-, produkt- og motedesignvirksomhet strimmelen 3, 5097 bergen" data-signals="2" data-name="10m light solutions as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>10M LIGHT SOLUTIONS AS</h3>
+      <p class="sub">Org.nr 833431862 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/833431862" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Industri-, produkt- og motedesignvirksomhet · Strimmelen 3, 5097 BERGEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Erlend Refsdal Thiem <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/833431862/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 305 k <span class="muted">(305 007)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/833431862" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2019-kullet ved hoffsvangen skole 937179243 aktiviteter i andre medlemsorganisasjoner ellers hveemsvegen 76, 2850 lena" data-signals="0" data-name="2019-kullet ved hoffsvangen skole"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2019-KULLET VED HOFFSVANGEN SKOLE</h3>
+      <p class="sub">Org.nr 937179243 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/937179243" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Hveemsvegen 76, 2850 LENA</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1.nesodden/ jaer speidergruppe 998466946 aktiviteter i andre medlemsorganisasjoner ellers fjordvangveien 80d, 1459 nesodden" data-signals="0" data-name="1.nesodden/ jaer speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1.NESODDEN/ JAER SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 998466946 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/998466946" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Fjordvangveien 80D, 1459 NESODDEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1045 invest as 933380211 uoppgitt vestengveien 40, 1725 sarpsborg" data-signals="2" data-name="1045 invest as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1045 INVEST AS</h3>
+      <p class="sub">Org.nr 933380211 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/933380211" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · Vestengveien 40, 1725 SARPSBORG</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Aleksander Eliassen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/933380211/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 0 <span class="muted">(0)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/933380211" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="109sammen 832336882 aktiviteter i andre medlemsorganisasjoner ellers heiane 10, 5131 nyborg" data-signals="2" data-name="109sammen"
+  data-web="1">
+  <header>
+    <div>
+      <h3>109SAMMEN</h3>
+      <p class="sub">Org.nr 832336882 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/832336882" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Heiane 10, 5131 NYBORG</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://www.109sammen.no" target="_blank" rel="noopener noreferrer">109sammen.no</a> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/832336882" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>CEO (daglig leder)</dt><dd>Morten Lyngøy <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/832336882/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="12-pausen as konkursbo 937662068 radiokringkasting og distribuering av musikk og andre lydmedier gjelsmoveien 23, 4619 mosby" data-signals="0" data-name="12-pausen as konkursbo"
+  data-web="0">
+  <header>
+    <div>
+      <h3>12-PAUSEN AS KONKURSBO</h3>
+      <p class="sub">Org.nr 937662068 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/937662068" target="_blank" rel="noopener noreferrer">Brreg</a> · KBO · Radiokringkasting og distribuering av musikk og andre lydmedier · Gjelsmoveien 23, 4619 MOSBY</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="123bilmegler hardanger as 994986775 detaljhandel med motorvogner nedre vik 3, 5610 øystese" data-signals="2" data-name="123bilmegler hardanger as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>123BILMEGLER HARDANGER AS</h3>
+      <p class="sub">Org.nr 994986775 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/994986775" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Detaljhandel med motorvogner · Nedre Vik 3, 5610 ØYSTESE</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Jostein Døssland <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/994986775/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 5.5 m <span class="muted">(5 476 807)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/994986775" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="04 invest as 929751353 utleie og leasing av andre maskiner og annet utstyr og materiell ikke nevnt annet sted c/o daniel asmare, oskar braatens gate 25, 0474 oslo" data-signals="2" data-name="04 invest as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>04 INVEST AS</h3>
+      <p class="sub">Org.nr 929751353 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/929751353" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Utleie og leasing av andre maskiner og annet utstyr og materiell ikke nevnt annet sted · c/o Daniel Asmare, Oskar Braatens gate 25, 0474 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Daniel Hansen Asmare <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/929751353/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 127 k <span class="muted">(127 000)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/929751353" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2. stavanger speidergruppe 994110888 aktiviteter i andre medlemsorganisasjoner ellers mosvangen 13, 4021 stavanger" data-signals="0" data-name="2. stavanger speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2. STAVANGER SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 994110888 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/994110888" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Mosvangen 13, 4021 STAVANGER</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1896 invest as 996953076 andre egeninvesteringsselskaper c/o advokat egil hatling, bryggegata 6, 0250 oslo" data-signals="0" data-name="1896 invest as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1896 INVEST AS</h3>
+      <p class="sub">Org.nr 996953076 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/996953076" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Andre egeninvesteringsselskaper · c/o Advokat Egil Hatling, Bryggegata 6, 0250 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1779 holding as tvangsavviklingsbo 937822642 uoppgitt hjortefaret 4, 1779 halden" data-signals="0" data-name="1779 holding as tvangsavviklingsbo"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1779 HOLDING AS TVANGSAVVIKLINGSBO</h3>
+      <p class="sub">Org.nr 937822642 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/937822642" target="_blank" rel="noopener noreferrer">Brreg</a> · KBO · Uoppgitt · Hjortefaret 4, 1779 HALDEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="10blank as 919509740 arkitektvirksomhet sørbøveien 80, 4990 søndeled" data-signals="3" data-name="10blank as"
+  data-web="1">
+  <header>
+    <div>
+      <h3>10BLANK AS</h3>
+      <p class="sub">Org.nr 919509740 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/919509740" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Arkitektvirksomhet · Sørbøveien 80, 4990 SØNDELED</p>
+    </div>
+    <span class="score" title="Verified signals for this company">3</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://www.10blank.no/" target="_blank" rel="noopener noreferrer">10blank.no</a> <span class="badge web" title="Found on the company's own verified website">Web</span><span class="meta"><a class="src" href="https://www.10blank.no/" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>CEO (daglig leder)</dt><dd>Knut Arve Kittilsen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/919509740/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 1.0 m <span class="muted">(1 001 745)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/919509740" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1. batnfjord speidergruppe 988186856 aktiviteter i andre medlemsorganisasjoner ellers 6631 batnfjordsøra" data-signals="0" data-name="1. batnfjord speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1. BATNFJORD SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 988186856 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/988186856" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · 6631 BATNFJORDSØRA</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="10 skien bsk 985989087 aktiviteter i andre medlemsorganisasjoner ellers c/o anne lene madsen, venstøphøgda 170, 3721 skien" data-signals="1" data-name="10 skien bsk"
+  data-web="0">
+  <header>
+    <div>
+      <h3>10 SKIEN BSK</h3>
+      <p class="sub">Org.nr 985989087 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/985989087" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Anne Lene Madsen, Venstøphøgda 170, 3721 SKIEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Anne Lene Romsdalen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/985989087/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1894 aastorp teknisk rådgivning 933299651 annen teknisk konsulentvirksomhet østvollveien 15, 1165 oslo" data-signals="0" data-name="1894 aastorp teknisk rådgivning"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1894 AASTORP TEKNISK RÅDGIVNING</h3>
+      <p class="sub">Org.nr 933299651 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/933299651" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Annen teknisk konsulentvirksomhet · Østvollveien 15, 1165 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="13. haugesund kfuk-kfum speidergruppe 922093504 aktiviteter i andre medlemsorganisasjoner ellers c/o tore daniel hjortland, karmsundgata 252, 5525 haugesund" data-signals="0" data-name="13. haugesund kfuk-kfum speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>13. HAUGESUND KFUK-KFUM SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 922093504 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/922093504" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Tore Daniel Hjortland, Karmsundgata 252, 5525 HAUGESUND</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="17. maikomitéen i norane 928164209 aktiviteter i andre medlemsorganisasjoner ellers c/o maria landøy slinde, ylvisåker 44, 6858 fardal" data-signals="1" data-name="17. maikomitéen i norane"
+  data-web="0">
+  <header>
+    <div>
+      <h3>17. MAIKOMITÉEN I NORANE</h3>
+      <p class="sub">Org.nr 928164209 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/928164209" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Maria Landøy Slinde, Ylvisåker 44, 6858 FARDAL</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Ole Johnny Lerheim <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/928164209/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="...bare modalen 979168268 reparasjon og vedlikehold av maskiner c/o vestby regnskapskontor as, kleverveien 6, 1543 vestby" data-signals="0" data-name="...bare modalen"
+  data-web="0">
+  <header>
+    <div>
+      <h3>...BARE MODALEN</h3>
+      <p class="sub">Org.nr 979168268 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/979168268" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Reparasjon og vedlikehold av maskiner · c/o Vestby Regnskapskontor AS, Kleverveien 6, 1543 VESTBY</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1.trinn hystad skule 826152842 aktiviteter i andre medlemsorganisasjoner ellers c/o cecilie eriksen raunholm, roleghaugen 11, 5416 stord" data-signals="0" data-name="1.trinn hystad skule"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1.TRINN HYSTAD SKULE</h3>
+      <p class="sub">Org.nr 826152842 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/826152842" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Cecilie Eriksen Raunholm, Roleghaugen 11, 5416 STORD</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1 buddy holding as 918085726 uoppgitt inkognitogata 12, 0258 oslo" data-signals="0" data-name="1 buddy holding as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1 BUDDY HOLDING AS</h3>
+      <p class="sub">Org.nr 918085726 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/918085726" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · Inkognitogata 12, 0258 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1.lone speidergruppe 987928964 aktiviteter i andre medlemsorganisasjoner ellers c/o henrik lohne, hardangervegen 681, 5268 haukeland" data-signals="0" data-name="1.lone speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1.LONE SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 987928964 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/987928964" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Henrik Lohne, Hardangervegen 681, 5268 HAUKELAND</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1. stavern speidergruppe av norges speiderforbund 923215026 aktiviteter i andre medlemsorganisasjoner ellers c/o marit strømnæs, kurerveien 2, 3290 stavern" data-signals="0" data-name="1. stavern speidergruppe av norges speiderforbund"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1. STAVERN SPEIDERGRUPPE AV NORGES SPEIDERFORBUND</h3>
+      <p class="sub">Org.nr 923215026 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/923215026" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Marit Strømnæs, Kurerveien 2, 3290 STAVERN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1 .borgestad speidergruppe 989277626 aktiviteter i andre medlemsorganisasjoner ellers c/o petter borgestad, gunnar knudsens veg 150, 3712 skien" data-signals="0" data-name="1 .borgestad speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1 .BORGESTAD SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 989277626 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/989277626" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Petter Borgestad, Gunnar Knudsens veg 150, 3712 SKIEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="18. bergen speidergruppe 987237163 aktiviteter i andre medlemsorganisasjoner ellers starefossveien 20, 5019 bergen" data-signals="1" data-name="18. bergen speidergruppe"
+  data-web="1">
+  <header>
+    <div>
+      <h3>18. BERGEN SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 987237163 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/987237163" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Starefossveien 20, 5019 BERGEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://www.18bergen.org" target="_blank" rel="noopener noreferrer">18bergen.org</a> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/987237163" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1person as 933204502 catering for arrangementer johnseveien 6, 1628 engelsviken" data-signals="1" data-name="1person as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1PERSON AS</h3>
+      <p class="sub">Org.nr 933204502 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/933204502" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Catering for arrangementer · Johnseveien 6, 1628 ENGELSVIKEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 10 k <span class="muted">(10 000)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/933204502" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1. øvsttun speidergruppe 987378204 aktiviteter i andre medlemsorganisasjoner ellers " data-signals="2" data-name="1. øvsttun speidergruppe"
+  data-web="1">
+  <header>
+    <div>
+      <h3>1. ØVSTTUN SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 987378204 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/987378204" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://www.ovsttun.org" target="_blank" rel="noopener noreferrer">ovsttun.org</a> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/987378204" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>CEO (daglig leder)</dt><dd>Cecilie Opdahl Hanseth <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/987378204/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="10fold as 819767122 bedriftsrådgivning og annen administrativ rådgivning hausmanns gate 17, 0182 oslo" data-signals="3" data-name="10fold as"
+  data-web="1">
+  <header>
+    <div>
+      <h3>10FOLD AS</h3>
+      <p class="sub">Org.nr 819767122 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/819767122" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Bedriftsrådgivning og annen administrativ rådgivning · Hausmanns gate 17, 0182 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">3</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://www.10fold.no" target="_blank" rel="noopener noreferrer">10fold.no</a> <span class="badge web" title="Found on the company's own verified website">Web</span><span class="meta"><a class="src" href="https://www.10fold.no" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>CEO (daglig leder)</dt><dd>Rolf Audun Berg <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/819767122/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 65 k <span class="muted">(64 900)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/819767122" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="153 invest as 937571569 utleie av egen eller leid fast eiendom c/o puma gruppen as, rådhusgaten 3, 3080 holmestrand" data-signals="1" data-name="153 invest as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>153 INVEST AS</h3>
+      <p class="sub">Org.nr 937571569 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/937571569" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Utleie av egen eller leid fast eiendom · c/o Puma Gruppen AS, Rådhusgaten 3, 3080 HOLMESTRAND</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Amarpreet Singh Bains <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/937571569/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="# urban strong and proud 835953742 aktiviteter i andre medlemsorganisasjoner ellers christian michelsens gate 63, 0474 oslo" data-signals="1" data-name="# urban strong and proud"
+  data-web="0">
+  <header>
+    <div>
+      <h3># URBAN STRONG AND PROUD</h3>
+      <p class="sub">Org.nr 835953742 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/835953742" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Christian Michelsens gate 63, 0474 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Håkon Reidar Julseth <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/835953742/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="150 yards ahead as 918774459 industri-, produkt- og motedesignvirksomhet vangsgata 33, 5700 voss" data-signals="2" data-name="150 yards ahead as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>150 YARDS AHEAD AS</h3>
+      <p class="sub">Org.nr 918774459 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/918774459" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Industri-, produkt- og motedesignvirksomhet · Vangsgata 33, 5700 VOSS</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Ingrid Brandseth <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/918774459/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 11 k <span class="muted">(11 106)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/918774459" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="17 mai komite vigrestad 924290102 aktiviteter i andre medlemsorganisasjoner ellers " data-signals="0" data-name="17 mai komite vigrestad"
+  data-web="0">
+  <header>
+    <div>
+      <h3>17 MAI KOMITE VIGRESTAD</h3>
+      <p class="sub">Org.nr 924290102 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/924290102" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="17 mai komite - harøy skulekrins 922704163 aktiviteter i andre medlemsorganisasjoner ellers " data-signals="0" data-name="17 mai komite - harøy skulekrins"
+  data-web="0">
+  <header>
+    <div>
+      <h3>17 MAI KOMITE - HARØY SKULEKRINS</h3>
+      <p class="sub">Org.nr 922704163 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/922704163" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="13b interactive da 935852706 utgivelse av programvare for dataspill brattørveita 13b, 7010 trondheim" data-signals="0" data-name="13b interactive da"
+  data-web="0">
+  <header>
+    <div>
+      <h3>13B INTERACTIVE DA</h3>
+      <p class="sub">Org.nr 935852706 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/935852706" target="_blank" rel="noopener noreferrer">Brreg</a> · DA · Utgivelse av programvare for dataspill · Brattørveita 13B, 7010 TRONDHEIM</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1.618 medica as 928654702 allmennlegetjenester hagaliveien 5b, 1358 jar" data-signals="1" data-name="1.618 medica as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1.618 MEDICA AS</h3>
+      <p class="sub">Org.nr 928654702 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/928654702" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Allmennlegetjenester · Hagaliveien 5B, 1358 JAR</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 1.1 m <span class="muted">(1 079 510)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/928654702" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2001 ventures as 934445724 dataprogrammeringstjenester platous gate 9b, 0190 oslo" data-signals="2" data-name="2001 ventures as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2001 VENTURES AS</h3>
+      <p class="sub">Org.nr 934445724 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/934445724" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Dataprogrammeringstjenester · Platous gate 9B, 0190 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Håvard Hauger Sjong <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/934445724/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 4.3 m <span class="muted">(4 314 257)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/934445724" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2 play as 912716457 detaljhandel med spill og leker nydalsveien 20a, 0484 oslo" data-signals="1" data-name="2 play as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2 PLAY AS</h3>
+      <p class="sub">Org.nr 912716457 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/912716457" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Detaljhandel med spill og leker · Nydalsveien 20A, 0484 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 5.5 m <span class="muted">(5 464 468)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/912716457" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="17. mai komiteen 814440222 aktiviteter i andre medlemsorganisasjoner ellers saksegjerdet 3, 6456 skåla" data-signals="0" data-name="17. mai komiteen"
+  data-web="0">
+  <header>
+    <div>
+      <h3>17. MAI KOMITEEN</h3>
+      <p class="sub">Org.nr 814440222 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/814440222" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Saksegjerdet 3, 6456 SKÅLA</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="123vinduspuss as 921194854 utvendig rengjøring av bygninger og industriell rengjøring storevarveien 390, 3160 stokke" data-signals="4" data-name="123vinduspuss as"
+  data-web="1">
+  <header>
+    <div>
+      <h3>123VINDUSPUSS AS</h3>
+      <p class="sub">Org.nr 921194854 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/921194854" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Utvendig rengjøring av bygninger og industriell rengjøring · Storevarveien 390, 3160 STOKKE</p>
+    </div>
+    <span class="score" title="Verified signals for this company">4</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://123vinduspuss.no/" target="_blank" rel="noopener noreferrer">123vinduspuss.no</a> <span class="badge web" title="Found on the company's own verified website">Web</span><span class="meta"><a class="src" href="https://123vinduspuss.no/" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>CEO (daglig leder)</dt><dd>Pål R. Dahl <span class="badge web" title="Found on the company's own verified website">Web</span><span class="meta"><a class="src" href="https://123vinduspuss.no/om-oss/" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 1.5 m <span class="muted">(1 458 378)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/921194854" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  <div class="socials"><a class="chip" href="https://facebook.com/123vinduspuss" target="_blank" rel="noopener noreferrer">Facebook</a></div>
+  
+  
+</article>
+<article class="card" data-search="10th music da 818707282 andre tjenester tilknyttet kunstnerisk virksomhet og underholdningsvirksomhet midtre solligården 27, 9020 tromsdalen" data-signals="0" data-name="10th music da"
+  data-web="0">
+  <header>
+    <div>
+      <h3>10TH MUSIC DA</h3>
+      <p class="sub">Org.nr 818707282 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/818707282" target="_blank" rel="noopener noreferrer">Brreg</a> · DA · Andre tjenester tilknyttet kunstnerisk virksomhet og underholdningsvirksomhet · Midtre Solligården 27, 9020 TROMSDALEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="øgsnes holding as 938687129 uoppgitt tore hunds gate 41, 8514 narvik" data-signals="1" data-name="øgsnes holding as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>ØGSNES HOLDING AS</h3>
+      <p class="sub">Org.nr 938687129 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/938687129" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · Tore Hunds gate 41, 8514 NARVIK</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Sølvi Anita Olsen Øgsnes <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/938687129/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1128 invest as 935546826 uoppgitt saksegjerdet 17, 6456 skåla" data-signals="1" data-name="1128 invest as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1128 INVEST AS</h3>
+      <p class="sub">Org.nr 935546826 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/935546826" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · Saksegjerdet 17, 6456 SKÅLA</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 0 <span class="muted">(0)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/935546826" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1280 design av christoffer svendsen 988440809 produksjon av keramiske vegg- og gulvfliser ystenesgata 32, 6007 ålesund" data-signals="0" data-name="1280 design av christoffer svendsen"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1280 DESIGN AV CHRISTOFFER SVENDSEN</h3>
+      <p class="sub">Org.nr 988440809 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/988440809" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Produksjon av keramiske vegg- og gulvfliser · Ystenesgata 32, 6007 ÅLESUND</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="11:11 skincare as 830861742 detaljhandel med kosmetikk og toalettartikler c/o that girl as, briskebyveien 56, 0259 oslo" data-signals="1" data-name="11:11 skincare as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>11:11 SKINCARE AS</h3>
+      <p class="sub">Org.nr 830861742 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/830861742" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Detaljhandel med kosmetikk og toalettartikler · c/o That girl AS, Briskebyveien 56, 0259 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 0 <span class="muted">(0)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/830861742" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="100 % paulsen as 997947967 oppføring av bygninger sandsnes, 9140 rebbenes" data-signals="2" data-name="100 % paulsen as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>100 % PAULSEN AS</h3>
+      <p class="sub">Org.nr 997947967 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/997947967" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Oppføring av bygninger · Sandsnes, 9140 REBBENES</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Ednar Paulsen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/997947967/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 2.4 m <span class="muted">(2 355 031)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/997947967" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1905 invest as 888341692 kjøp og salg av egen fast eiendom c/o kjetil mansåker wigdel, lysgårdsvegen 3, 2618 lillehammer" data-signals="1" data-name="1905 invest as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1905 INVEST AS</h3>
+      <p class="sub">Org.nr 888341692 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/888341692" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Kjøp og salg av egen fast eiendom · c/o Kjetil Mansåker Wigdel, Lysgårdsvegen 3, 2618 LILLEHAMMER</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 0 <span class="muted">(0)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/888341692" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="123 sushi as 927370743 drift av restauranter bibliotekgata 30, 1473 lørenskog" data-signals="2" data-name="123 sushi as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>123 SUSHI AS</h3>
+      <p class="sub">Org.nr 927370743 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/927370743" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Drift av restauranter · Bibliotekgata 30, 1473 LØRENSKOG</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Hai Thanh Truong <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/927370743/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 1.2 m <span class="muted">(1 159 708)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/927370743" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1vask as 915330193 rengjøring av bygninger fortun 10, 6887 lærdal" data-signals="2" data-name="1vask as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1VASK AS</h3>
+      <p class="sub">Org.nr 915330193 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/915330193" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Rengjøring av bygninger · Fortun 10, 6887 LÆRDAL</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Daniella Andersen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/915330193/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 4.9 m <span class="muted">(4 859 032)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/915330193" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1hp.no 918692940 aktiviteter i andre medlemsorganisasjoner ellers c/o kim grindvoll, bryggerivegen 9, 2380 brumunddal" data-signals="1" data-name="1hp.no"
+  data-web="1">
+  <header>
+    <div>
+      <h3>1HP.NO</h3>
+      <p class="sub">Org.nr 918692940 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/918692940" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Kim Grindvoll, Bryggerivegen 9, 2380 BRUMUNDDAL</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Website</dt><dd><a href="https://www.1hp.no" target="_blank" rel="noopener noreferrer">1hp.no</a> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/918692940" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1visning sathasivam 927642123 interiørdesignvirksomhet odalsvegen 15, 2080 eidsvoll" data-signals="0" data-name="1visning sathasivam"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1VISNING SATHASIVAM</h3>
+      <p class="sub">Org.nr 927642123 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/927642123" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Interiørdesignvirksomhet · Odalsvegen 15, 2080 EIDSVOLL</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="0fri101 as 937715838 uoppgitt evenrødveien 114, 1615 fredrikstad" data-signals="1" data-name="0fri101 as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>0FRI101 AS</h3>
+      <p class="sub">Org.nr 937715838 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/937715838" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · Evenrødveien 114, 1615 FREDRIKSTAD</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>John George Tilley <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/937715838/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1.våler speidergruppe 938486700 aktiviteter i andre medlemsorganisasjoner ellers folkestadveien 2, 1592 våler i østfold" data-signals="0" data-name="1.våler speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1.VÅLER SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 938486700 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/938486700" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · Folkestadveien 2, 1592 VÅLER I ØSTFOLD</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1. nordstrand speidergruppe 819302332 aktiviteter i andre medlemsorganisasjoner ellers c/o karen johanne strømstad, åssiden terrasse 32a, 1160 oslo" data-signals="0" data-name="1. nordstrand speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1. NORDSTRAND SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 819302332 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/819302332" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Karen Johanne Strømstad, Åssiden terrasse 32A, 1160 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2 friske føtter - fotterapeut ann johansen 929874706 ortopedi- og fotterapitjenester dronningens gate 24, 3211 sandefjord" data-signals="0" data-name="2 friske føtter - fotterapeut ann johansen"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2 FRISKE FØTTER - FOTTERAPEUT ANN JOHANSEN</h3>
+      <p class="sub">Org.nr 929874706 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/929874706" target="_blank" rel="noopener noreferrer">Brreg</a> · ENK · Ortopedi- og fotterapitjenester · Dronningens gate 24, 3211 SANDEFJORD</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2 rom og kjøkken as 914085292 oppføring av bygninger heksumhøgda 3, 2846 bøverbru" data-signals="2" data-name="2 rom og kjøkken as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2 ROM OG KJØKKEN AS</h3>
+      <p class="sub">Org.nr 914085292 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/914085292" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Oppføring av bygninger · Heksumhøgda 3, 2846 BØVERBRU</p>
+    </div>
+    <span class="score" title="Verified signals for this company">2</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Tore Hagen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/914085292/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 10.3 m <span class="muted">(10 286 937)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/914085292" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1 sarpsborg speidergruppe 985594546 aktiviteter i andre medlemsorganisasjoner ellers v/ ole petter johansen, gjevikveien 14, 1404 siggerud" data-signals="1" data-name="1 sarpsborg speidergruppe"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1 SARPSBORG SPEIDERGRUPPE</h3>
+      <p class="sub">Org.nr 985594546 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/985594546" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · v/ Ole Petter Johansen, Gjevikveien 14, 1404 SIGGERUD</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Ole Petter Johansen <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/985594546/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1540 heritage capital as 921994605 uoppgitt c/o richard aaeng, graahbakken 2, 0286 oslo" data-signals="0" data-name="1540 heritage capital as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1540 HERITAGE CAPITAL AS</h3>
+      <p class="sub">Org.nr 921994605 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/921994605" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Uoppgitt · c/o Richard Aaeng, Graahbakken 2, 0286 OSLO</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="18 cafe og interiør as 926088378 detaljhandel med innredningsartikler ikke nevnt annet sted apotekergata 18, 3187 horten" data-signals="3" data-name="18 cafe og interiør as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>18 CAFE OG INTERIØR AS</h3>
+      <p class="sub">Org.nr 926088378 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/926088378" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Detaljhandel med innredningsartikler ikke nevnt annet sted · Apotekergata 18, 3187 HORTEN</p>
+    </div>
+    <span class="score" title="Verified signals for this company">3</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Tonje Sørsdal <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/926088378/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Employees</dt><dd>7 <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/926088378" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div><div class="fact"><dt>Revenue</dt><dd>NOK 2.9 m <span class="muted">(2 904 533)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/926088378" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="17. mai komite lavik 826926872 aktiviteter i andre medlemsorganisasjoner ellers c/o bjørg af geijerstam, kvamsvegen 2, 6947 lavik" data-signals="0" data-name="17. mai komite lavik"
+  data-web="0">
+  <header>
+    <div>
+      <h3>17. MAI KOMITE LAVIK</h3>
+      <p class="sub">Org.nr 826926872 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/826926872" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers · c/o Bjørg af Geijerstam, Kvamsvegen 2, 6947 LAVIK</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="17.maikomiteen i brevik 920781616 aktiviteter i andre medlemsorganisasjoner ellers " data-signals="1" data-name="17.maikomiteen i brevik"
+  data-web="0">
+  <header>
+    <div>
+      <h3>17.MAIKOMITEEN I BREVIK</h3>
+      <p class="sub">Org.nr 920781616 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/920781616" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Aktiviteter i andre medlemsorganisasjoner ellers</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>CEO (daglig leder)</dt><dd>Thomas André Fjeld Bjørholdt <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/enhetsregisteret/api/enheter/920781616/roller" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2 sikre as 888973192 annen teknisk konsulentvirksomhet oksehovedveien 26, 1365 blommenholm" data-signals="1" data-name="2 sikre as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2 SIKRE AS</h3>
+      <p class="sub">Org.nr 888973192 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/888973192" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Annen teknisk konsulentvirksomhet · Oksehovedveien 26, 1365 BLOMMENHOLM</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 279 k <span class="muted">(278 969)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/888973192" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="2 me &amp; to te 917986924 utøvende kunstnerisk virksomhet og underholdningsvirksomhet innenfor musikk c/o knut kornelius gundersen, haugtussavegen 8, 4365 nærbø" data-signals="0" data-name="2 me &amp; to te"
+  data-web="0">
+  <header>
+    <div>
+      <h3>2 ME &amp; TO TE</h3>
+      <p class="sub">Org.nr 917986924 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/917986924" target="_blank" rel="noopener noreferrer">Brreg</a> · FLI · Utøvende kunstnerisk virksomhet og underholdningsvirksomhet innenfor musikk · c/o Knut Kornelius Gundersen, Haugtussavegen 8, 4365 NÆRBØ</p>
+    </div>
+    <span class="score" title="Verified signals for this company">0</span>
+  </header>
+  
+  <dl class="facts"><p class="muted empty">No verified facts beyond the registry entry.</p></dl>
+  
+  
+  
+</article>
+<article class="card" data-search="1 etg leirvollen 1a as 916573715 utleie av egen eller leid fast eiendom leirvollen 1a, 4513 mandal" data-signals="1" data-name="1 etg leirvollen 1a as"
+  data-web="0">
+  <header>
+    <div>
+      <h3>1 ETG LEIRVOLLEN 1A AS</h3>
+      <p class="sub">Org.nr 916573715 · <a class="src" href="https://virksomhet.brreg.no/nb/oppslag/enheter/916573715" target="_blank" rel="noopener noreferrer">Brreg</a> · AS · Utleie av egen eller leid fast eiendom · Leirvollen 1A, 4513 MANDAL</p>
+    </div>
+    <span class="score" title="Verified signals for this company">1</span>
+  </header>
+  
+  <dl class="facts"><div class="fact"><dt>Revenue</dt><dd>NOK 625 k <span class="muted">(624 730)</span> <span class="badge official" title="Official registry data (Brønnøysund)">Brreg</span><span class="meta"><a class="src" href="https://data.brreg.no/regnskapsregisteret/regnskap/916573715" target="_blank" rel="noopener noreferrer">source</a> · 2026-11-15</span></dd></div></dl>
+  
+  
+  
+</article></div>
+  <p class="none" id="none">No companies match.</p>
+</div>
+<script>
+(function () {
+  var grid = document.getElementById('grid'), q = document.getElementById('q'),
+      sort = document.getElementById('sort'), web = document.getElementById('web'),
+      shown = document.getElementById('shown'), none = document.getElementById('none');
+  var cards = Array.prototype.slice.call(grid.children);
+  function apply() {
+    var term = q.value.trim().toLowerCase(), n = 0;
+    cards.sort(function (a, b) {
+      if (sort.value === 'name') return a.dataset.name.localeCompare(b.dataset.name);
+      return (b.dataset.signals - a.dataset.signals) || a.dataset.name.localeCompare(b.dataset.name);
+    });
+    cards.forEach(function (c) {
+      var ok = (!term || c.dataset.search.indexOf(term) !== -1) && (!web.checked || c.dataset.web === '1');
+      c.style.display = ok ? '' : 'none';
+      if (ok) n++;
+      grid.appendChild(c);
+    });
+    shown.textContent = n + ' of ' + cards.length + ' shown';
+    none.style.display = n ? 'none' : 'block';
+  }
+  q.addEventListener('input', apply); sort.addEventListener('change', apply); web.addEventListener('change', apply);
+  apply();
+})();
+</script>
+</body>
+</html>
