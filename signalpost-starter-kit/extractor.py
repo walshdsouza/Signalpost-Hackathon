@@ -650,7 +650,7 @@ def _validate_news(
     """Turn one LLM candidate into a NewsItem, or explain why it was rejected."""
     try:
         item = NewsItem(
-            title=cand.title, url=cand.url, published_date=cand.published_date,
+            title=_strip_leading_date(cand.title), url=cand.url, published_date=cand.published_date,
             date_type=cand.date_type, date_evidence=cand.date_evidence,
             summary=cand.summary, retrieval_date=today,
         )
@@ -882,6 +882,16 @@ _PUBLISHED_TEXT_RE = re.compile(
     rf"\b(?:publisert|published|posted|publiseringsdato)\b\s*(?:on|den|:)?\s*:?\s*{_DATE_RX}", re.IGNORECASE)
 _DEADLINE_TEXT_RE = re.compile(
     rf"\b(?:søknadsfrist|soknadsfrist|application deadline|deadline|frist)\b\s*:?\s*{_DATE_RX}", re.IGNORECASE)
+
+
+_LEADING_DATE_RE = re.compile(rf"^\s*{_DATE_RX}\s*[-–—|:·]?\s*", re.IGNORECASE)
+
+
+def _strip_leading_date(title: str) -> str:
+    """'13 November 2026Ex. dividend ...' -> 'Ex. dividend ...' (card text glued to the date).
+    Keeps the title unchanged if nothing would remain."""
+    stripped = _LEADING_DATE_RE.sub("", title or "", count=1)
+    return stripped if len(stripped.strip()) >= 3 else title
 
 
 def _iso_from_match(m: re.Match) -> str | None:

@@ -311,3 +311,12 @@ if __name__ == "__main__":
         fn()
         print("ok  ", name)
     print(f"{len(tests)} passed")
+
+def test_leading_date_stripped_from_llm_news_titles():
+    from extractor import _strip_leading_date as strip
+    assert strip("13 November 2026Ex. dividend second quarter 2026 today - OSE") == \
+        "Ex. dividend second quarter 2026 today - OSE"
+    assert strip("2026-10-09 – Equinor and Shell partner") == "Equinor and Shell partner"
+    assert strip("12.03.2026: Ny kontrakt") == "Ny kontrakt"
+    assert strip("Q3 2026 results") == "Q3 2026 results"        # not a leading date
+    assert strip("13 November 2026") == "13 November 2026"      # nothing would remain

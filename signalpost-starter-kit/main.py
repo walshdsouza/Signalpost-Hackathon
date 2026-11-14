@@ -367,6 +367,13 @@ async def main(argv: list[str] | None = None) -> int:
         json.dump(output, fh, indent=2, ensure_ascii=False)
 
     log.info("Results saved -> %s  (%d companies)", args.output, len(output) - 1)
+
+    # Human-readable HTML report next to the JSON; never fails the run.
+    try:
+        from report import write_report
+        log.info("Report saved  -> %s", write_report(args.output))
+    except Exception as e:  # noqa: BLE001
+        log.warning("HTML report skipped (%s: %s)", type(e).__name__, e)
     return 0
 
 
